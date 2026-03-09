@@ -175,40 +175,61 @@ async function checkTextModel(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
+    const requestBody = {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 50,
+    };
+    console.log(`[healthcheck] ${label} request:`, JSON.stringify(requestBody));
+
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 50,
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
     clearTimeout(timeout);
     const elapsed = Date.now() - start;
 
+    console.log(`[healthcheck] ${label} HTTP status: ${resp.status}, elapsed: ${elapsed}ms`);
+
     if (!resp.ok) {
       const body = await resp.text();
+      console.log(`[healthcheck] ${label} error body:`, body);
       return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}`;
     }
 
-    const data = (await resp.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const content = data.choices?.[0]?.message?.content ?? "";
+    const rawBody = await resp.text();
+    console.log(`[healthcheck] ${label} raw response body:`, rawBody);
 
-    if (validate(content)) {
+    const data = JSON.parse(rawBody) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      error?: { message?: string; code?: number };
+    };
+
+    if (data.error) {
+      console.log(`[healthcheck] ${label} API error in body:`, JSON.stringify(data.error));
+      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}`;
+    }
+
+    const content = data.choices?.[0]?.message?.content ?? "";
+    console.log(`[healthcheck] ${label} extracted content: [${content}]`);
+    console.log(`[healthcheck] ${label} content length: ${content.length}, charCodes: ${[...content].slice(0, 30).map(c => c.charCodeAt(0)).join(',')}`);
+
+    const trimmed = content.trim();
+    if (validate(trimmed)) {
       return `${label}    ${model}\n✅ OK — ${elapsed}ms`;
     } else {
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: Unexpected response: ${content.slice(0, 200)}`;
+      console.log(`[healthcheck] ${label} validation failed for trimmed content: [${trimmed}]`);
+      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: Unexpected response: ${trimmed.slice(0, 200)}`;
     }
   } catch (err) {
     const elapsed = Date.now() - start;
+    console.error(`[healthcheck] ${label} exception:`, err);
     const msg =
       err instanceof Error && err.name === "AbortError"
         ? "Request timed out"
@@ -230,36 +251,67 @@ async function checkImageModel(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30000);
 
+    const requestBody = {
+      model,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: 1000,
+    };
+    console.log(`[healthcheck] ${label} request:`, JSON.stringify(requestBody));
+
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: 1000,
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 
     clearTimeout(timeout);
     const elapsed = Date.now() - start;
 
+    console.log(`[healthcheck] ${label} HTTP status: ${resp.status}, elapsed: ${elapsed}ms`);
+    console.log(`[healthcheck] ${label} response headers:`, JSON.stringify(Object.fromEntries(resp.headers.entries())));
+
     if (!resp.ok) {
       const body = await resp.text();
+      console.log(`[healthcheck] ${label} error body:`, body);
       return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}`;
     }
 
-    const data = (await resp.json()) as {
+    const rawBody = await resp.text();
+    console.log(`[healthcheck] ${label} raw response body (first 2000 chars):`, rawBody.slice(0, 2000));
+    console.log(`[healthcheck] ${label} raw response body length:`, rawBody.length);
+
+    const data = JSON.parse(rawBody) as {
       choices?: Array<{
         message?: {
           content?: string | Array<{ type: string; image_url?: { url?: string } }>;
         };
       }>;
+      error?: { message?: string; code?: number };
     };
-    const content = data.choices?.[0]?.message?.content;
+
+    if (data.error) {
+      console.log(`[healthcheck] ${label} API error in body:`, JSON.stringify(data.error));
+      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}`;
+    }
+
+    const message = data.choices?.[0]?.message;
+    const content = message?.content;
+
+    console.log(`[healthcheck] ${label} message object:`, JSON.stringify(message));
+    console.log(`[healthcheck] ${label} content type: ${typeof content}, isArray: ${Array.isArray(content)}`);
+    if (typeof content === "string") {
+      console.log(`[healthcheck] ${label} content length: ${content.length}`);
+      console.log(`[healthcheck] ${label} content preview: ${content.slice(0, 500)}`);
+    } else if (Array.isArray(content)) {
+      console.log(`[healthcheck] ${label} content array length: ${content.length}`);
+      console.log(`[healthcheck] ${label} content array:`, JSON.stringify(content).slice(0, 1000));
+    } else {
+      console.log(`[healthcheck] ${label} content value:`, content);
+    }
 
     // Check if we got any non-empty response (image data may come in various formats)
     const hasContent =
@@ -268,6 +320,8 @@ async function checkImageModel(
         ? content.length > 0
         : Array.isArray(content) && content.length > 0);
 
+    console.log(`[healthcheck] ${label} hasContent: ${hasContent}`);
+
     if (hasContent) {
       return `${label}    ${model}\n✅ OK — ${elapsed}ms`;
     } else {
@@ -275,6 +329,7 @@ async function checkImageModel(
     }
   } catch (err) {
     const elapsed = Date.now() - start;
+    console.error(`[healthcheck] ${label} exception:`, err);
     const msg =
       err instanceof Error && err.name === "AbortError"
         ? "Request timed out"
