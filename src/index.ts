@@ -3,6 +3,7 @@ import { TelegramClient } from "@mtcute/node";
 import { Dispatcher } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerDevPanel } from "./handlers/onDevPanel.js";
+import { registerUserHandler } from "./handlers/onUserMessage.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const API_ID = Number(process.env.API_ID);
@@ -37,6 +38,9 @@ process.on("unhandledRejection", (reason) => {
 
 // Register dev panel handler
 registerDevPanel(tg, dp, DEV_TG_ID);
+
+// Register user-facing handler with inline buttons
+registerUserHandler(tg, dp, DEV_TG_ID);
 
 // Start the bot
 async function main() {
