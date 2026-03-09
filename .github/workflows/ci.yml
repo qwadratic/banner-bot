@@ -21,10 +21,24 @@ jobs:
       - run: npm run build
 
       - name: Deploy and restart service
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          API_ID: ${{ secrets.API_ID }}
+          API_HASH: ${{ secrets.API_HASH }}
+          DEV_TG_ID: ${{ secrets.DEV_TG_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           sudo mkdir -p /opt/banner-bot
           sudo cp -r dist package.json package-lock.json node_modules /opt/banner-bot/
           sudo cp banner-bot.service /etc/systemd/system/banner-bot.service
+          sudo tee /opt/banner-bot/.env > /dev/null <<EOF
+          BOT_TOKEN=${BOT_TOKEN}
+          API_ID=${API_ID}
+          API_HASH=${API_HASH}
+          DEV_TG_ID=${DEV_TG_ID}
+          OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+          EOF
+          sudo chmod 600 /opt/banner-bot/.env
           sudo systemctl daemon-reload
           sudo systemctl enable banner-bot
           sudo systemctl restart banner-bot
