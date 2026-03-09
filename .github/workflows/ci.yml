@@ -22,6 +22,7 @@ jobs:
 
       - name: Deploy and restart service
         run: |
+          sudo mkdir -p /opt/banner-bot
           sudo cp -r dist package.json package-lock.json node_modules /opt/banner-bot/
           sudo cp banner-bot.service /etc/systemd/system/banner-bot.service
           sudo systemctl daemon-reload
