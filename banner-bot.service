@@ -1,0 +1,14 @@
+[Unit]
+Description=Banner Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/banner-bot
+ExecStart=/usr/bin/node dist/index.js
+Restart=always
+RestartSec=5
+EnvironmentFile=/opt/banner-bot/.env
+
+[Install]
+WantedBy=multi-user.target
