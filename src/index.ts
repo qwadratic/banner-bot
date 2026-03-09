@@ -44,6 +44,8 @@ async function main() {
   console.log(`Bot started as @${self.username ?? self.displayName}`);
   console.log(`Dev TG ID: ${DEV_TG_ID}`);
   console.log(`PID: ${process.pid}`);
+
+  await tg.sendText(DEV_TG_ID, `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`);
 }
 
 main().catch((err) => {
