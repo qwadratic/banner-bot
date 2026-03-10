@@ -35,15 +35,8 @@ process.on("unhandledRejection", (reason) => {
   // Do not exit — keep bot running
 });
 
-// Track greeted users (first /start only)
-const greetedUsers = new Set<number>();
-
-// Handle /start command — greet only on first use
+// Handle /start command — greet once per session
 dp.onNewMessage(filters.command("start"), async (msg) => {
-  const userId = msg.sender.id;
-  if (greetedUsers.has(userId)) return;
-  greetedUsers.add(userId);
-
   await msg.answerText(
     "👋 Привет! Я бот для создания баннеров.\n\nОтправь мне описание или изображение, и я помогу создать баннер.",
   );
@@ -66,6 +59,14 @@ async function main() {
 
   await tg.sendText(DEV_TG_ID, `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`, {
     replyMarkup: BotKeyboard.inline([
+      [
+        BotKeyboard.callback("📊 Status", "dev:status"),
+        BotKeyboard.callback("🔬 Health check", "dev:healthcheck"),
+      ],
+      [
+        BotKeyboard.callback("🔄 Restart", "dev:restart"),
+        BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
+      ],
       [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
     ]),
   });
