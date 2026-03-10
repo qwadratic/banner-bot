@@ -12,13 +12,13 @@ export type SessionPhase =
   | "AWAITING_FEEDBACK_COMMENT"
   | "AWAITING_INTERRUPT_RESOLUTION";
 
-export type ModuleSet = {
-  VISUAL_HOOK: string;
-  VISUAL_DRAMA: string;
-  COMPOSITION: string;
-  MAIN_ELEMENT: string;
-  SCROLL_EFFECT: string;
-};
+export const MODULE_KEYS = [
+  "VISUAL_HOOK", "VISUAL_DRAMA", "COMPOSITION", "MAIN_ELEMENT", "SCROLL_EFFECT",
+] as const;
+
+export type ModuleKey = typeof MODULE_KEYS[number];
+
+export type ModuleSet = Record<ModuleKey, string>;
 
 export type SonnetOutput = {
   detectedStage: string;
@@ -56,14 +56,28 @@ export type Session = {
   warningSent: boolean;
 };
 
+export type DevConfigAwait = {
+  type: "photo";
+  target: string; // "doc" | "b0" | "b1"
+  userId: number;
+} | {
+  type: "text";
+  target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b0" | "mod_add_VISUAL_HOOK" etc.
+  userId: number;
+} | null;
+
 export type GlobalState = {
   activeSession: Session | null;
   devUserMode: boolean;
+  devConfigAwait: DevConfigAwait;
+  testMode: boolean;
 };
 
 export const globalState: GlobalState = {
   activeSession: null,
   devUserMode: false,
+  devConfigAwait: null,
+  testMode: false,
 };
 
 export function createSession(userId: number): Session {
@@ -93,4 +107,9 @@ export function createSession(userId: number): Session {
 export function touchSession(session: Session): void {
   session.lastActivityAt = Date.now();
   session.warningSent = false;
+}
+
+export function getEffectiveModules(session: Session): ModuleSet | null {
+  if (!session.modules) return null;
+  return { ...session.modules, ...session.userOverrides };
 }

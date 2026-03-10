@@ -3,8 +3,7 @@ import type { MessageContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
 import { globalState, createSession, touchSession } from "../session.js";
 import { devAlert } from "../devAlert.js";
-import { classifyMessage } from "../flow/gate.js";
-import { analyzeMessage } from "../flow/analyze.js";
+import { classifyMessage, GateTimeoutError } from "../flow/gate.js";
 import { stageStepText, stageStepKeyboard } from "../ui/hintSelector.js";
 
 export async function handleMessage(tg: TelegramClient, msg: MessageContext): Promise<void> {
@@ -91,6 +90,10 @@ async function processIncomingText(tg: TelegramClient, userId: number, text: str
     });
   } catch (err) {
     await devAlert("onMessage / gate classification", err, { userId, phase: session.phase });
-    await tg.sendText(userId, CONFIG.ui.retryError);
+    if (err instanceof GateTimeoutError) {
+      await tg.sendText(userId, CONFIG.ui.timeoutError);
+    } else {
+      await tg.sendText(userId, CONFIG.ui.retryError);
+    }
   }
 }

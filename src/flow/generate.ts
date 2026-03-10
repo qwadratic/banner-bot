@@ -1,96 +1,23 @@
-import { deflateSync } from "node:zlib";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { ModuleSet, SonnetOutput } from "../session.js";
-import { CONFIG } from "../config.js";
+import { CONFIG, resolvedModels } from "../config.js";
+import { getImageTemplate, getDoctorPortrait, getBannerStyles } from "../runtimeConfig.js";
+import { devAlert } from "../devAlert.js";
+import { globalState } from "../session.js";
+import { mockGenerateImage } from "./mocks.js";
+import { fetchOpenRouter, withRetries } from "./openrouter.js";
 
-// Phase 1: Mock Nano Banana — returns a solid dark green 1280x720 PNG
-// with "MOCK BANNER" text after 3s delay
+// Resolve to project root (two levels up from src/flow/ or dist/flow/)
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
 
-function createMockPng(): Buffer {
-  // Minimal valid PNG: 1x1 dark green pixel, scaled display
-  // For Phase 1 we generate a simple valid PNG using raw bytes
-  // This is a 1280x720 image with solid #1B4D3E color
-
-  // We'll create a proper PNG by constructing it manually
-  // For simplicity, use a small PNG that Telegram can display
-  const width = 1280;
-  const height = 720;
-
-  // PNG signature
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-
-  // IHDR chunk
-  const ihdrData = Buffer.alloc(13);
-  ihdrData.writeUInt32BE(width, 0);
-  ihdrData.writeUInt32BE(height, 4);
-  ihdrData[8] = 8;  // bit depth
-  ihdrData[9] = 2;  // color type: RGB
-  ihdrData[10] = 0; // compression
-  ihdrData[11] = 0; // filter
-  ihdrData[12] = 0; // interlace
-  const ihdr = makeChunk("IHDR", ihdrData);
-
-  // IDAT chunk - raw image data with zlib
-  // Each row: filter byte (0) + RGB pixels
-  const rowSize = 1 + width * 3;
-  const rawData = Buffer.alloc(rowSize * height);
-  const r = 0x1B, g = 0x4D, b = 0x3E; // #1B4D3E
-  for (let y = 0; y < height; y++) {
-    const offset = y * rowSize;
-    rawData[offset] = 0; // no filter
-    for (let x = 0; x < width; x++) {
-      const px = offset + 1 + x * 3;
-      rawData[px] = r;
-      rawData[px + 1] = g;
-      rawData[px + 2] = b;
-    }
-  }
-
-  // Add simple white text area in center (approximate "MOCK BANNER")
-  // Draw a white rectangle in the center
-  const textY1 = 330, textY2 = 390;
-  const textX1 = 440, textX2 = 840;
-  for (let y = textY1; y < textY2; y++) {
-    const offset = y * rowSize;
-    for (let x = textX1; x < textX2; x++) {
-      const px = offset + 1 + x * 3;
-      rawData[px] = 0xFF;
-      rawData[px + 1] = 0xFF;
-      rawData[px + 2] = 0xFF;
-    }
-  }
-
-  // Compress with zlib
-  const compressed = deflateSync(rawData);
-  const idat = makeChunk("IDAT", compressed);
-
-  // IEND chunk
-  const iend = makeChunk("IEND", Buffer.alloc(0));
-
-  return Buffer.concat([signature, ihdr, idat, iend]);
-}
-
-function makeChunk(type: string, data: Buffer): Buffer {
-  const typeBytes = Buffer.from(type, "ascii");
-  const length = Buffer.alloc(4);
-  length.writeUInt32BE(data.length, 0);
-
-  const crcInput = Buffer.concat([typeBytes, data]);
-  const crc = crc32(crcInput);
-  const crcBuf = Buffer.alloc(4);
-  crcBuf.writeUInt32BE(crc >>> 0, 0);
-
-  return Buffer.concat([length, typeBytes, data, crcBuf]);
-}
-
-function crc32(buf: Buffer): number {
-  let crc = 0xFFFFFFFF;
-  for (let i = 0; i < buf.length; i++) {
-    crc ^= buf[i];
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-    }
-  }
-  return ~crc;
+interface ReferenceAsset {
+  path: string | null;
+  role: string;
+  promptHint: string;
+  base64?: string;
 }
 
 export function assemblePrompt(
@@ -103,18 +30,118 @@ export function assemblePrompt(
     .map(([k, v]) => `${k} = ${v}`)
     .join("\n");
 
-  return CONFIG.imagePromptTemplate
+  return getImageTemplate()
     .replace("{modules}", modulesBlock)
     .replace("{scene}", sonnetOutput.scene)
     .replace("{headline}", sonnetOutput.headline)
     .replace("{secondary}", sonnetOutput.secondary);
 }
 
-// Phase 1: Mock image generation — returns a placeholder PNG
+async function loadReferenceAssets(detectedStage: string): Promise<ReferenceAsset[]> {
+  const refs: ReferenceAsset[] = [
+    ...getBannerStyles().filter((r) => r.path !== null),
+  ];
+
+  if ((CONFIG.stagesWithDoctor as readonly string[]).includes(detectedStage)) {
+    const doc = getDoctorPortrait();
+    if (doc.path) {
+      refs.unshift(doc);
+    }
+  }
+
+  const loaded: ReferenceAsset[] = [];
+  for (const ref of refs) {
+    if (!ref.path) continue;
+    try {
+      const resolved = path.resolve(PROJECT_ROOT, ref.path);
+      const buf = await fs.readFile(resolved);
+      loaded.push({
+        ...ref,
+        base64: buf.toString("base64"),
+      });
+    } catch (err) {
+      await devAlert("generate / missing asset", err, { path: ref.path, role: ref.role });
+    }
+  }
+
+  return loaded;
+}
+
 export async function generateImage(
-  _prompt: string,
-  _detectedStage: string,
+  prompt: string,
+  detectedStage: string,
 ): Promise<Buffer> {
-  await new Promise((r) => setTimeout(r, 3_000));
-  return createMockPng();
+  if (globalState.testMode) return mockGenerateImage(prompt, detectedStage);
+
+  const loadedRefs = await loadReferenceAssets(detectedStage);
+
+  // Assemble multimodal content blocks
+  const contentBlocks: Array<
+    | { type: "text"; text: string }
+    | { type: "image_url"; image_url: { url: string } }
+  > = [];
+
+  for (const ref of loadedRefs) {
+    if (!ref.base64) continue;
+    contentBlocks.push({
+      type: "text",
+      text: `[${ref.role.toUpperCase()} REFERENCE: ${ref.promptHint}]`,
+    });
+    contentBlocks.push({
+      type: "image_url",
+      image_url: { url: `data:image/jpeg;base64,${ref.base64}` },
+    });
+  }
+
+  contentBlocks.push({ type: "text", text: prompt });
+
+  return withRetries({
+    attempts: CONFIG.retry.imageGen.attempts,
+    delayMs: CONFIG.retry.imageGen.delayMs,
+    context: "generate",
+    meta: { detectedStage },
+    fn: async () => {
+      const data = await fetchOpenRouter({
+        body: {
+          model: resolvedModels.image,
+          max_tokens: 1,
+          messages: [{ role: "user", content: contentBlocks }],
+          image_config: { aspect_ratio: "16:9" },
+        },
+        timeoutMs: CONFIG.timeouts.imageGen,
+      });
+
+      // Extract image from response
+      const message = data.choices?.[0]?.message;
+      let imageBase64: string | null = null;
+
+      // Check message.images[] (OpenRouter/Gemini pattern)
+      const images = message?.images;
+      if (images && images.length > 0) {
+        const dataUrl = images[0].image_url?.url ?? "";
+        const match = dataUrl.match(/^data:[^;]+;base64,(.+)$/);
+        if (match) {
+          imageBase64 = match[1];
+        }
+      }
+
+      // Fallback: check if content itself contains a data URL
+      if (!imageBase64 && typeof message?.content === "string") {
+        const match = message.content.match(/data:image\/[^;]+;base64,([A-Za-z0-9+/=]+)/);
+        if (match) {
+          imageBase64 = match[1];
+        }
+      }
+
+      if (!imageBase64) {
+        const msgDump = JSON.stringify(message, (_k: string, v: unknown) => {
+          if (typeof v === "string" && v.length > 200) return v.slice(0, 200) + "...";
+          return v;
+        });
+        throw new Error(`No image in response. Raw message: ${msgDump?.slice(0, 500)}`);
+      }
+
+      return Buffer.from(imageBase64, "base64");
+    },
+  });
 }

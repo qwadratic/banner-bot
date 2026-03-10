@@ -1,5 +1,6 @@
 import { BotKeyboard } from "@mtcute/node";
 import type { ReplyMarkup } from "@mtcute/node";
+import { getEffectiveModules } from "../session.js";
 import type { Session } from "../session.js";
 
 const CONFIDENCE_LABELS: Record<string, string> = {
@@ -29,9 +30,7 @@ export function analysisCardText(session: Session): string {
   }
 
   // Modules
-  const effective = session.modules
-    ? { ...session.modules, ...session.userOverrides }
-    : null;
+  const effective = getEffectiveModules(session);
   if (effective) {
     text += "\n\nМодулі:";
     for (const [key, val] of Object.entries(effective)) {

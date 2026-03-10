@@ -1,4 +1,4 @@
-import type { TelegramClient } from "@mtcute/node";
+import { BotKeyboard, type TelegramClient } from "@mtcute/node";
 import { Dispatcher, filters } from "@mtcute/dispatcher";
 import type { MessageContext } from "@mtcute/dispatcher";
 import { globalState } from "./session.js";
@@ -6,6 +6,7 @@ import { handleStart, handleCancel } from "./handlers/onCommand.js";
 import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
 import { handleDevCallback } from "./handlers/onDevPanel.js";
+import { handleConfigCallback, handleConfigInput } from "./handlers/onDevConfig.js";
 
 export function registerBotHandlers(
   tg: TelegramClient,
@@ -36,16 +37,113 @@ export function registerBotHandlers(
     await handleCancel(tg, msg);
   });
 
-  // Text messages from authorized users (non-command)
-  dp.onNewMessage(filters.text, async (msg) => {
-    if (!isAuthorizedUser(msg)) return;
+  // /dev command — switch dev user back to dev mode
+  dp.onNewMessage(filters.command("dev"), async (msg) => {
+    const uid = msg.sender?.id;
+    if (uid !== devTgId) return;
+
+    globalState.devUserMode = false;
+    globalState.devConfigAwait = null;
+
+    // End active session if it belongs to the dev user
+    if (globalState.activeSession?.userId === uid) {
+      globalState.activeSession = null;
+    }
+
+    await tg.sendText(uid, "🛠 Dev Panel", {
+      replyMarkup: BotKeyboard.inline([
+        [
+          BotKeyboard.callback("📊 Status", "dev:status"),
+          BotKeyboard.callback("🔬 Health check", "dev:healthcheck"),
+        ],
+        [
+          BotKeyboard.callback("🔄 Restart", "dev:restart"),
+          BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
+        ],
+        [BotKeyboard.callback("⚙️ Config", "cfg:main")],
+        [BotKeyboard.callback("👤 User mode", "dev:usermode")],
+      ]),
+    });
+  });
+
+  // /config command — open config panel for any authorized user
+  dp.onNewMessage(filters.command("config"), async (msg) => {
+    const uid = msg.sender?.id;
+    if (!uid || !isAuthorized(uid)) return;
+
+    // For dev user, exit user mode
+    if (uid === devTgId) {
+      globalState.devUserMode = false;
+    }
+
+    await tg.sendText(uid, "⚙️ Configuration", {
+      replyMarkup: BotKeyboard.inline([
+        [
+          BotKeyboard.callback("📷 Photos", "cfg:photos"),
+          BotKeyboard.callback("📝 Annotations", "cfg:ann"),
+        ],
+        [
+          BotKeyboard.callback("🤖 Prompts", "cfg:pr"),
+          BotKeyboard.callback("🎨 Image tpl", "cfg:tpl"),
+        ],
+        [
+          BotKeyboard.callback("📊 Stage modules", "cfg:stg"),
+          BotKeyboard.callback("🧩 Module opts", "cfg:mo"),
+        ],
+        [BotKeyboard.callback("✕ Close", "cfg:close")],
+      ]),
+    });
+  });
+
+  // Messages from dev user — check for config input awaiting first
+  dp.onNewMessage(async (msg) => {
+    const uid = msg.sender?.id;
+    if (uid !== devTgId) return;
     if (msg.text?.startsWith("/")) return;
+
+    // If dev is awaiting config input (text or photo), handle it
+    if (globalState.devConfigAwait?.userId === uid && !globalState.devUserMode) {
+      const handled = await handleConfigInput(tg, msg);
+      if (handled) return;
+    }
+
+    // Otherwise, fall through to regular message handling only if in user mode
+    if (!globalState.devUserMode) return;
+    await handleMessage(tg, msg);
+  });
+
+  // Messages from authorized non-dev users (text + photo for config input)
+  dp.onNewMessage(async (msg) => {
+    const uid = msg.sender?.id;
+    if (!uid) return;
+    if (uid === devTgId) return; // handled above
+    if (!isAuthorized(uid)) return;
+    if (msg.text?.startsWith("/")) return;
+
+    // Check if this user is awaiting config input
+    if (globalState.devConfigAwait?.userId === uid) {
+      const handled = await handleConfigInput(tg, msg);
+      if (handled) return;
+    }
+
+    // Regular text message handling
+    if (!msg.text) return;
     await handleMessage(tg, msg);
   });
 
   // Single unified callback handler for ALL inline button clicks
   dp.onCallbackQuery(async (cb) => {
     const uid = cb.user.id;
+
+    // Config callbacks — any authorized user
+    if (cb.dataStr?.startsWith("cfg:")) {
+      if (isAuthorized(uid)) {
+        await handleConfigCallback(tg, cb);
+      } else {
+        await cb.answer({});
+      }
+      return;
+    }
 
     // Dev panel callbacks — only for dev user
     if (cb.dataStr?.startsWith("dev:")) {

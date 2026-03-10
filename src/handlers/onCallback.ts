@@ -1,6 +1,7 @@
 import { BotKeyboard, InputMedia, type TelegramClient } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
+import { getModuleOptions } from "../runtimeConfig.js";
 import { globalState, touchSession, createSession } from "../session.js";
 import type { Session } from "../session.js";
 import { devAlert } from "../devAlert.js";
@@ -262,7 +263,7 @@ async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session:
       // Swap one random module for variation
       const categories = Object.keys(session.modules) as Array<keyof typeof session.modules>;
       const cat = categories[Math.floor(Math.random() * categories.length)];
-      const options = CONFIG.moduleOptions[cat] ?? [];
+      const options = getModuleOptions()[cat] ?? [];
       const current = (session.userOverrides[cat] ?? session.modules[cat]) as string;
       const alternatives = options.filter((o: string) => o !== current);
       if (alternatives.length > 0) {
@@ -467,7 +468,7 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
 
     // Process the pending text as a new message
     if (pendingText) {
-      const { classifyMessage } = await import("../flow/gate.js");
+      const { classifyMessage, GateTimeoutError } = await import("../flow/gate.js");
       try {
         const result = await classifyMessage(pendingText);
         if (!result.isFunnelMessage) {
@@ -481,7 +482,11 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
         });
       } catch (err) {
         await devAlert("onCallback / interrupt:cancel / gate", err, { userId });
-        await tg.sendText(userId, CONFIG.ui.retryError);
+        if (err instanceof GateTimeoutError) {
+          await tg.sendText(userId, CONFIG.ui.timeoutError);
+        } else {
+          await tg.sendText(userId, CONFIG.ui.retryError);
+        }
       }
     }
   } else if (value === "continue") {

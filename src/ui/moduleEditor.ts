@@ -1,6 +1,7 @@
 import { BotKeyboard } from "@mtcute/node";
 import type { ReplyMarkup } from "@mtcute/node";
-import { CONFIG } from "../config.js";
+import { getModuleOptions } from "../runtimeConfig.js";
+import { getEffectiveModules } from "../session.js";
 import type { Session, ModuleSet } from "../session.js";
 
 export function moduleEditorText(session: Session): string {
@@ -16,7 +17,7 @@ export function moduleEditorText(session: Session): string {
 }
 
 export function moduleEditorKeyboard(session: Session): ReplyMarkup {
-  const categories = Object.keys(CONFIG.moduleOptions);
+  const categories = Object.keys(getModuleOptions());
   const rows = categories.map((cat) => [
     BotKeyboard.callback(`⚙️ ${cat}`, `module_cat:${cat}`),
   ]);
@@ -28,7 +29,7 @@ export function moduleEditorKeyboard(session: Session): ReplyMarkup {
 }
 
 export function moduleCategoryKeyboard(category: string, session: Session): ReplyMarkup {
-  const options = CONFIG.moduleOptions[category] ?? [];
+  const options = getModuleOptions()[category] ?? [];
   const effective = getEffectiveModules(session);
   const current = effective ? effective[category as keyof ModuleSet] : null;
 
@@ -51,7 +52,3 @@ export function moduleCategoryKeyboard(category: string, session: Session): Repl
   return BotKeyboard.inline(rows);
 }
 
-function getEffectiveModules(session: Session): ModuleSet | null {
-  if (!session.modules) return null;
-  return { ...session.modules, ...session.userOverrides } as ModuleSet;
-}
