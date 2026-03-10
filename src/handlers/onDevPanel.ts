@@ -115,260 +115,148 @@ function statusText(): string {
   return text;
 }
 
-async function runHealthCheck(
-  tg: TelegramClient,
-  devTgId: number,
-): Promise<string> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    return "🔬 Health check\n\n❌ OPENROUTER_API_KEY not set";
-  }
-
-  const checks = await Promise.allSettled([
-    checkTextModel(
-      "Gate",
-      resolvedModels.gate,
-      'Respond with ONLY this exact JSON object, no markdown, no code fences, no explanation: {"ok": true}',
-      apiKey,
-      (text) => {
-        try {
-          // Strip markdown code fences if present
-          let cleaned = text;
-          const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/m);
-          if (fenceMatch) {
-            cleaned = fenceMatch[1].trim();
-          }
-          const json = JSON.parse(cleaned);
-          return json.ok === true;
-        } catch {
-          return false;
-        }
-      },
-    ),
-    checkTextModel(
-      "Analyze",
-      resolvedModels.analyze,
-      "Reply with the single word: READY",
-      apiKey,
-      (text) => text.includes("READY"),
-    ),
-    checkImageModel(
-      "Image",
-      resolvedModels.image,
-      "A solid dark green rectangle, no text.",
-      apiKey,
-    ),
-  ]);
-
-  let text = "🔬 Health check\n";
-
-  for (const result of checks) {
-    if (result.status === "fulfilled") {
-      const val = result.value;
-      if (typeof val === "string") {
-        text += `\n${val}`;
-      } else {
-        // ImageCheckResult
-        text += `\n${val.text}`;
-        // Send generated image as photo to dev
-        if (val.imageBase64 && val.imageMime) {
-          try {
-            const buf = Buffer.from(val.imageBase64, "base64");
-            const ext = val.imageMime.split("/")[1] || "png";
-            await tg.sendMedia(devTgId, InputMedia.photo(
-              new Uint8Array(buf),
-              { fileName: `healthcheck.${ext}` },
-            ), { caption: "🔬 Image model health check output" });
-          } catch (e) {
-            console.error("[healthcheck] Failed to send image:", e);
-            text += `\n  ⚠️ Could not send image preview`;
-          }
-        }
-      }
-    } else {
-      text += `\n❌ Unexpected error: ${result.reason}`;
-    }
-  }
-
-  return text;
+interface ModelCheck {
+  label: string;
+  model: string;
+  prompt: string;
+  maxTokens: number;
 }
 
-async function checkTextModel(
-  label: string,
-  model: string,
-  prompt: string,
-  apiKey: string,
-  validate: (text: string) => boolean,
-): Promise<string> {
-  const start = Date.now();
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-
-    const requestBody = {
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 50,
-    };
-    console.log(`[healthcheck] ${label} request:`, JSON.stringify(requestBody));
-
-    const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeout);
-    const elapsed = Date.now() - start;
-
-    console.log(`[healthcheck] ${label} HTTP status: ${resp.status}, elapsed: ${elapsed}ms`);
-
-    if (!resp.ok) {
-      const body = await resp.text();
-      console.log(`[healthcheck] ${label} error body:`, body);
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}`;
-    }
-
-    const rawBody = await resp.text();
-    console.log(`[healthcheck] ${label} raw response body:`, rawBody);
-
-    const data = JSON.parse(rawBody) as {
-      choices?: Array<{ message?: { content?: string } }>;
-      error?: { message?: string; code?: number };
-    };
-
-    if (data.error) {
-      console.log(`[healthcheck] ${label} API error in body:`, JSON.stringify(data.error));
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}`;
-    }
-
-    const content = data.choices?.[0]?.message?.content ?? "";
-    console.log(`[healthcheck] ${label} extracted content: [${content}]`);
-    console.log(`[healthcheck] ${label} content length: ${content.length}, charCodes: ${[...content].slice(0, 30).map(c => c.charCodeAt(0)).join(',')}`);
-
-    const trimmed = content.trim();
-    if (validate(trimmed)) {
-      return `${label}    ${model}\n✅ OK — ${elapsed}ms`;
-    } else {
-      console.log(`[healthcheck] ${label} validation failed for trimmed content: [${trimmed}]`);
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: Unexpected response: ${trimmed.slice(0, 200)}`;
-    }
-  } catch (err) {
-    const elapsed = Date.now() - start;
-    console.error(`[healthcheck] ${label} exception:`, err);
-    const msg =
-      err instanceof Error && err.name === "AbortError"
-        ? "Request timed out"
-        : err instanceof Error
-          ? err.message
-          : String(err);
-    return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: ${msg}`;
-  }
-}
-
-interface ImageCheckResult {
-  text: string;
-  imageBase64?: string; // raw base64 (no data: prefix)
+interface CheckResult {
+  label: string;
+  model: string;
+  elapsed: number;
+  error?: string;
+  rawContent?: string;        // text content from response
+  imageBase64?: string;       // base64 image data (no prefix)
   imageMime?: string;
+  messageKeys?: string[];     // keys present on the message object
 }
 
-async function checkImageModel(
-  label: string,
-  model: string,
-  prompt: string,
-  apiKey: string,
-): Promise<ImageCheckResult> {
+const HEALTHCHECK_MODELS: ModelCheck[] = [
+  { label: "Gate", model: resolvedModels.gate, prompt: 'Reply with valid JSON: {"ok": true}', maxTokens: 50 },
+  { label: "Analyze", model: resolvedModels.analyze, prompt: "Reply with the single word: READY", maxTokens: 50 },
+  { label: "Image", model: resolvedModels.image, prompt: "A solid dark green rectangle, no text.", maxTokens: 1000 },
+];
+
+async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResult> {
+  const { label, model, prompt, maxTokens } = check;
   const start = Date.now();
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
-
-    const requestBody = {
-      model,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: 1000,
-    };
-    console.log(`[healthcheck] ${label} request:`, JSON.stringify(requestBody));
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 30_000);
 
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(requestBody),
-      signal: controller.signal,
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], max_tokens: maxTokens }),
+      signal: ctrl.signal,
     });
-
-    clearTimeout(timeout);
+    clearTimeout(timer);
     const elapsed = Date.now() - start;
-
-    console.log(`[healthcheck] ${label} HTTP status: ${resp.status}, elapsed: ${elapsed}ms`);
 
     if (!resp.ok) {
       const body = await resp.text();
-      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}` };
+      return { label, model, elapsed, error: `HTTP ${resp.status}: ${body.slice(0, 500)}` };
     }
 
     const rawBody = await resp.text();
-    console.log(`[healthcheck] ${label} raw response body length:`, rawBody.length);
-
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = JSON.parse(rawBody) as any;
 
     if (data.error) {
-      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}` };
+      return { label, model, elapsed, error: `API: ${data.error.message ?? JSON.stringify(data.error)}` };
     }
 
     const message = data.choices?.[0]?.message;
+    const result: CheckResult = { label, model, elapsed, messageKeys: Object.keys(message ?? {}) };
 
-    // OpenRouter returns Gemini image output in message.images[]
-    // Each entry: { type: "image_url", image_url: { url: "data:<mime>;base64,..." } }
-    const images = message?.images as
-      | Array<{ type: string; image_url?: { url?: string } }>
-      | undefined;
+    // Extract text content
+    const content = message?.content;
+    if (typeof content === "string" && content.length > 0) {
+      result.rawContent = content;
+    }
 
+    // Extract image from message.images[] (OpenRouter/Gemini)
+    const images = message?.images as Array<{ image_url?: { url?: string } }> | undefined;
     if (images && images.length > 0) {
       const dataUrl = images[0].image_url?.url ?? "";
-      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        console.log(`[healthcheck] ${label} got image: mime=${match[1]}, base64 length=${match[2].length}`);
-        return {
-          text: `${label}    ${model}\n✅ OK — ${elapsed}ms (image ${match[1]})`,
-          imageBase64: match[2],
-          imageMime: match[1],
-        };
+      const m = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (m) {
+        result.imageMime = m[1];
+        result.imageBase64 = m[2];
       }
     }
 
-    // Fallback: check content field (text or multipart)
-    const content = message?.content;
-    const hasContent =
-      content != null &&
-      (typeof content === "string"
-        ? content.length > 0
-        : Array.isArray(content) && content.length > 0);
-
-    if (hasContent) {
-      return { text: `${label}    ${model}\n✅ OK — ${elapsed}ms` };
-    } else {
-      console.log(`[healthcheck] ${label} no image and no content. message keys:`, Object.keys(message ?? {}));
-      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: No image or text content` };
+    // If we got nothing at all, mark it
+    if (!result.rawContent && !result.imageBase64) {
+      result.error = `Empty response (message keys: ${result.messageKeys?.join(", ") ?? "none"})`;
     }
+
+    return result;
   } catch (err) {
     const elapsed = Date.now() - start;
-    console.error(`[healthcheck] ${label} exception:`, err);
-    const msg =
-      err instanceof Error && err.name === "AbortError"
-        ? "Request timed out"
-        : err instanceof Error
-          ? err.message
-          : String(err);
-    return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: ${msg}` };
+    const msg = err instanceof Error && err.name === "AbortError"
+      ? "Timed out (30s)"
+      : err instanceof Error ? err.message : String(err);
+    return { label, model, elapsed, error: msg };
+  }
+}
+
+function formatCheckResult(r: CheckResult): string {
+  const icon = r.error ? "❌" : "✅";
+  let line = `${icon} ${r.label}  ${r.model}  ${r.elapsed}ms`;
+  if (r.error) {
+    line += `\n   ${r.error.slice(0, 400)}`;
+  }
+  if (r.rawContent != null) {
+    line += `\n   → ${r.rawContent.slice(0, 300)}`;
+  }
+  if (r.imageBase64) {
+    const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
+    line += `\n   → image ${r.imageMime} ${kb} KB`;
+  }
+  return line;
+}
+
+async function runHealthCheck(
+  tg: TelegramClient,
+  devTgId: number,
+): Promise<void> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    await tg.sendText(devTgId, "🔬 Health check\n\n❌ OPENROUTER_API_KEY not set");
+    return;
+  }
+
+  // Fire all probes in parallel, wait for all
+  const results = await Promise.all(
+    HEALTHCHECK_MODELS.map((c) => probeModel(c, apiKey)),
+  );
+
+  // Build single text message
+  const lines = ["🔬 Health check\n"];
+  for (const r of results) {
+    lines.push(formatCheckResult(r));
+  }
+  await tg.sendText(devTgId, lines.join("\n"));
+
+  // Send image attachment separately (if any)
+  for (const r of results) {
+    if (r.imageBase64 && r.imageMime) {
+      try {
+        const buf = Buffer.from(r.imageBase64, "base64");
+        const ext = r.imageMime.split("/")[1] || "png";
+        await tg.sendMedia(
+          devTgId,
+          InputMedia.photo(new Uint8Array(buf), { fileName: `healthcheck.${ext}` }),
+          { caption: `🔬 ${r.label} model output` },
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        await tg.sendText(devTgId, `⚠️ Failed to send ${r.label} image: ${msg.slice(0, 300)}`);
+      }
+    }
   }
 }
 
@@ -436,9 +324,7 @@ export function registerDevPanel(
 
         case "healthcheck": {
           await cb.answer({ text: "Running health checks..." });
-          const result = await runHealthCheck(tg, devTgId);
-          // Send as new message so it persists in chat history
-          await tg.sendText(devTgId, result);
+          await runHealthCheck(tg, devTgId);
           break;
         }
 
