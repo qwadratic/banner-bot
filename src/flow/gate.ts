@@ -1,4 +1,5 @@
 import { CONFIG, resolvedModels } from "../config.js";
+import { getHaikuPrompt } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -32,7 +33,7 @@ export async function classifyMessage(inputText: string): Promise<GateResult> {
           model: resolvedModels.gate,
           max_tokens: 100,
           messages: [
-            { role: "system", content: CONFIG.haikusSystemPrompt },
+            { role: "system", content: getHaikuPrompt() },
             { role: "user", content: inputText },
           ],
         }),

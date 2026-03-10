@@ -42,7 +42,7 @@ function devPanelKeyboard() {
       BotKeyboard.callback("🔄 Restart", "dev:restart"),
       BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
     ],
-
+    [BotKeyboard.callback("⚙️ Config", "cfg:main")],
   ];
 
   if (!session) {

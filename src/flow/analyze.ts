@@ -1,5 +1,6 @@
 import type { SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
+import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -23,6 +24,25 @@ function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
     if (typeof mods[key] !== "string") return false;
   }
   return true;
+}
+
+function buildStageModuleTable(): string {
+  const defaults = getStageModuleDefaults();
+  const modKeys = ["VISUAL_HOOK", "VISUAL_DRAMA", "COMPOSITION", "MAIN_ELEMENT", "SCROLL_EFFECT"];
+  const header = `| Stage | ${modKeys.join(" | ")} |`;
+  const sep = `|${modKeys.map(() => "---").concat("---").join("|")}|`;
+  const rows = Object.entries(defaults).map(([stage, mods]) => {
+    const vals = modKeys.map((k) => mods[k] ?? "");
+    return `| ${stage} | ${vals.join(" | ")} |`;
+  });
+  return [header, sep, ...rows].join("\n");
+}
+
+function buildModuleOptionsList(): string {
+  const opts = getModuleOptions();
+  return Object.entries(opts)
+    .map(([cat, vals]) => `${cat}: ${vals.join(", ")}`)
+    .join("\n\n");
 }
 
 function buildUserMessage(inputText: string, hints: { stage?: string; style?: string }): string {
@@ -50,28 +70,11 @@ ${hintsBlock}
 
 Stage-to-module reference table (use as starting point, deviate when justified):
 
-| Stage          | VISUAL_HOOK        | VISUAL_DRAMA   | COMPOSITION             | MAIN_ELEMENT       | SCROLL_EFFECT   |
-|----------------|--------------------|----------------|-------------------------|--------------------|-----------------|
-| Attention      | contrast           | diagnostic     | left_text_right_visual  | foot_diagram       | graphic_arrows  |
-| Identification | quote_visual       | discovery      | centered_headline       | text_quote         | strong_contrast |
-| Problem        | professional_chaos | diagnostic     | split_screen            | symptom_labels     | visual_paradox  |
-| Insight        | medical_markup     | explanation    | left_text_right_visual  | foot_diagram       | dramatic_zoom   |
-| Authority      | split_reality      | explanation    | split_screen            | orthotic_insert    | strong_contrast |
-| Micro-value    | magnified_detail   | discovery      | oversized_object        | macro_foot_texture | dramatic_zoom   |
-| Possibility    | symbolic_object    | transformation | centered_headline       | orthotic_insert    | minimalism      |
-| FOMO           | contrast           | urgency        | centered_headline       | countdown_timer    | strong_contrast |
+${buildStageModuleTable()}
 
 Available module values per category:
 
-VISUAL_HOOK: contrast, magnified_detail, medical_markup, split_reality, symbolic_object, quote_visual, professional_chaos
-
-VISUAL_DRAMA: diagnostic, discovery, explanation, transformation, urgency
-
-COMPOSITION: left_text_right_visual, centered_headline, split_screen, oversized_object, minimal_focus
-
-MAIN_ELEMENT: foot_diagram, orthotic_insert, macro_foot_texture, symptom_labels, countdown_timer, text_quote
-
-SCROLL_EFFECT: oversized_object, visual_paradox, strong_contrast, graphic_arrows, dramatic_zoom, minimalism
+${buildModuleOptionsList()}
 
 Field instructions:
 - "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
@@ -196,7 +199,7 @@ export async function analyzeMessage(
   hints: { stage?: string; style?: string },
 ): Promise<SonnetOutput> {
   const userMessage = buildUserMessage(inputText, hints);
-  return callSonnet(CONFIG.sonnetSystemPrompt, userMessage, "analyze");
+  return callSonnet(getSonnetPrompt(), userMessage, "analyze");
 }
 
 export async function reanalyzeForStage(
@@ -205,5 +208,5 @@ export async function reanalyzeForStage(
   hints: { style?: string },
 ): Promise<SonnetOutput> {
   const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
-  return callSonnet(CONFIG.sonnetSystemPrompt, userMessage, "reanalyze");
+  return callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
 }

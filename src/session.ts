@@ -56,14 +56,24 @@ export type Session = {
   warningSent: boolean;
 };
 
+export type DevConfigAwait = {
+  type: "photo";
+  target: string; // "doc" | "b0" | "b1"
+} | {
+  type: "text";
+  target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b0" | "mod_add_VISUAL_HOOK" etc.
+} | null;
+
 export type GlobalState = {
   activeSession: Session | null;
   devUserMode: boolean;
+  devConfigAwait: DevConfigAwait;
 };
 
 export const globalState: GlobalState = {
   activeSession: null,
   devUserMode: false,
+  devConfigAwait: null,
 };
 
 export function createSession(userId: number): Session {

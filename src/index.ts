@@ -5,6 +5,7 @@ import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerDevPanel } from "./handlers/onDevPanel.js";
 import { registerBotHandlers } from "./router.js";
 import { initFeedbackDb } from "./db/feedback.js";
+import { initRuntimeConfig } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -35,6 +36,9 @@ initDevAlert(tg, DEV_TG_ID);
 
 // Initialize feedback database
 initFeedbackDb();
+
+// Initialize runtime config (load overrides from disk)
+initRuntimeConfig();
 
 // Register global error handlers BEFORE bot.start()
 process.on("uncaughtException", (error) => {
@@ -72,6 +76,7 @@ async function main() {
     commands: [
       { _: "botCommand", command: "start", description: "Почати" },
       { _: "botCommand", command: "cancel", description: "Скасувати сесію" },
+      { _: "botCommand", command: "dev", description: "Dev panel" },
     ],
   });
 
@@ -88,6 +93,7 @@ async function main() {
           BotKeyboard.callback("🔄 Restart", "dev:restart"),
           BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
         ],
+        [BotKeyboard.callback("⚙️ Config", "cfg:main")],
         [BotKeyboard.callback("👤 User mode", "dev:usermode")],
         [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
       ]),

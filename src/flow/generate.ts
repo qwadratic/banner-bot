@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ModuleSet, SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
+import { getImageTemplate, getDoctorPortrait, getBannerStyles } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -28,7 +29,7 @@ export function assemblePrompt(
     .map(([k, v]) => `${k} = ${v}`)
     .join("\n");
 
-  return CONFIG.imagePromptTemplate
+  return getImageTemplate()
     .replace("{modules}", modulesBlock)
     .replace("{scene}", sonnetOutput.scene)
     .replace("{headline}", sonnetOutput.headline)
@@ -37,11 +38,14 @@ export function assemblePrompt(
 
 async function loadReferenceAssets(detectedStage: string): Promise<ReferenceAsset[]> {
   const refs: ReferenceAsset[] = [
-    ...CONFIG.referenceAssets.bannerStyles.filter((r) => r.path !== null),
+    ...getBannerStyles().filter((r) => r.path !== null),
   ];
 
   if ((CONFIG.stagesWithDoctor as readonly string[]).includes(detectedStage)) {
-    refs.unshift(CONFIG.referenceAssets.doctorPortrait);
+    const doc = getDoctorPortrait();
+    if (doc.path) {
+      refs.unshift(doc);
+    }
   }
 
   const loaded: ReferenceAsset[] = [];
