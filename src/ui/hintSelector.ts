@@ -128,7 +128,7 @@ export function styleStepKeyboard(session: Session): ReplyMarkup {
 
   // Show "Аналізувати" when something is selected, otherwise "Пропустити"
   const actionRow = hasSelection
-    ? [BotKeyboard.callback("✅ Аналізувати", "hints:confirm")]
+    ? [BotKeyboard.callback("🔍 Аналізувати", "hints:confirm")]
     : [BotKeyboard.callback("⏭ Пропустити (без підказки)", "hints:skip_style")];
 
   rows.push(actionRow);
