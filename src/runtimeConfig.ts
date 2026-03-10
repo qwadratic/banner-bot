@@ -12,7 +12,11 @@ interface RuntimeOverrides {
   bannerStyles?: Array<{ path: string | null; role: string; promptHint: string }>;
   stageModuleDefaults?: Record<string, Record<string, string>>;
   moduleOptions?: Record<string, string[]>;
+  adminUserIds?: number[];
 }
+
+/** Initial admin IDs from env — set once at startup */
+let envAdminUserIds: number[] = [];
 
 let overrides: RuntimeOverrides = {};
 
@@ -220,4 +224,31 @@ export function resetField(field: keyof RuntimeOverrides): void {
 
 export function hasOverride(field: keyof RuntimeOverrides): boolean {
   return field in overrides && overrides[field] !== undefined;
+}
+
+// ── Admin user IDs ────────────────────────────────────────────────────────
+
+export function seedAdminUserIds(ids: number[]): void {
+  envAdminUserIds = ids;
+}
+
+export function getAdminUserIds(): number[] {
+  return overrides.adminUserIds ?? envAdminUserIds;
+}
+
+export function addAdminUserId(id: number): boolean {
+  const current = getAdminUserIds();
+  if (current.includes(id)) return false;
+  overrides.adminUserIds = [...current, id];
+  persist();
+  return true;
+}
+
+export function removeAdminUserId(id: number): boolean {
+  const current = getAdminUserIds();
+  const idx = current.indexOf(id);
+  if (idx === -1) return false;
+  overrides.adminUserIds = current.filter((x) => x !== id);
+  persist();
+  return true;
 }

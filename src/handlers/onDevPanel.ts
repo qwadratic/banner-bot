@@ -3,6 +3,7 @@ import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
 import { globalState } from "../session.js";
 import { devAlert } from "../devAlert.js";
+import { getAdminUserIds, addAdminUserId, removeAdminUserId } from "../runtimeConfig.js";
 
 const startTime = Date.now();
 
@@ -47,6 +48,7 @@ export function devPanelKeyboard() {
       BotKeyboard.callback("⚙️ Config", "cfg:main"),
       BotKeyboard.callback(testLabel, "dev:testmode"),
     ],
+    [BotKeyboard.callback("👥 Admins", "dev:admins")],
   ];
 
   if (!session) {
@@ -389,6 +391,34 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
+      case "admins": {
+        await cb.answer({});
+        const ids = getAdminUserIds();
+        const rows = ids.map((id) => [
+          BotKeyboard.callback(`❌ ${id}`, `dev:adm_rm:${id}`),
+        ]);
+        rows.push([BotKeyboard.callback("➕ Add admin", "dev:adm_add")]);
+        rows.push([BotKeyboard.callback("← Back", "dev:back")]);
+        const label = ids.length === 0 ? "No admins configured." : `${ids.length} admin(s):`;
+        await cb.editMessage({
+          text: `👥 Admins\n\n${label}`,
+          replyMarkup: BotKeyboard.inline(rows),
+        });
+        break;
+      }
+
+      case "adm_add": {
+        await cb.answer({});
+        globalState.devConfigAwait = { type: "text", target: "admin_add", userId: devTgId };
+        await cb.editMessage({
+          text: "👥 Send the Telegram user ID to add as admin:",
+          replyMarkup: BotKeyboard.inline([
+            [BotKeyboard.callback("✕ Cancel", "dev:admins")],
+          ]),
+        });
+        break;
+      }
+
       case "back": {
         await cb.answer({});
         await cb.editMessage({
@@ -399,6 +429,29 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       }
 
       default: {
+        // Handle dev:adm_rm:<id> pattern
+        if (action.startsWith("adm_rm:")) {
+          const idToRemove = parseInt(action.slice(7), 10);
+          if (!isNaN(idToRemove)) {
+            const removed = removeAdminUserId(idToRemove);
+            await cb.answer({ text: removed ? `Removed ${idToRemove}` : "Not found" });
+            // Re-render admin list
+            const ids = getAdminUserIds();
+            const rows = ids.map((id) => [
+              BotKeyboard.callback(`❌ ${id}`, `dev:adm_rm:${id}`),
+            ]);
+            rows.push([BotKeyboard.callback("➕ Add admin", "dev:adm_add")]);
+            rows.push([BotKeyboard.callback("← Back", "dev:back")]);
+            const label = ids.length === 0 ? "No admins configured." : `${ids.length} admin(s):`;
+            await cb.editMessage({
+              text: `👥 Admins\n\n${label}`,
+              replyMarkup: BotKeyboard.inline(rows),
+            });
+          } else {
+            await cb.answer({ text: "Invalid ID" });
+          }
+          break;
+        }
         await cb.answer({ text: "Unknown action" });
       }
     }

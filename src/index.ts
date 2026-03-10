@@ -5,7 +5,7 @@ import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerBotHandlers } from "./router.js";
 import { devPanelKeyboard } from "./handlers/onDevPanel.js";
 import { initFeedbackDb } from "./db/feedback.js";
-import { initRuntimeConfig } from "./runtimeConfig.js";
+import { initRuntimeConfig, seedAdminUserIds } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -18,11 +18,12 @@ if (!API_ID || isNaN(API_ID)) throw new Error("API_ID is required");
 if (!API_HASH) throw new Error("API_HASH is required");
 if (!DEV_TG_ID || isNaN(DEV_TG_ID)) throw new Error("DEV_TG_ID is required");
 
-// Parse admin user IDs
+// Parse admin user IDs from env and seed into runtime config
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS ?? "")
   .split(",")
   .map((s) => parseInt(s.trim(), 10))
   .filter((n) => !isNaN(n) && n > 0);
+seedAdminUserIds(ADMIN_USER_IDS);
 
 const tg = new TelegramClient({
   apiId: API_ID,
@@ -51,8 +52,8 @@ process.on("unhandledRejection", (reason) => {
   // Do not exit — keep bot running
 });
 
-// Register bot handlers for admin users
-registerBotHandlers(tg, dp, ADMIN_USER_IDS, DEV_TG_ID);
+// Register bot handlers
+registerBotHandlers(tg, dp, DEV_TG_ID);
 
 // Start session TTL checker
 startSessionTtl(tg);
