@@ -1,17 +1,24 @@
 import type { SonnetOutput } from "../session.js";
 
-// Phase 1: Mock Sonnet analysis — returns hardcoded FOMO response after 2s delay
+// Phase 1: Mock Sonnet analysis — returns hardcoded FOMO response after 2s delay.
+// If user provided a stage hint that differs from the mock's "FOMO", returns
+// modelAgreesWithHint: false so the conflict-resolution flow can be tested.
 export async function analyzeMessage(
   _inputText: string,
-  _hints: { stage?: string; style?: string },
+  hints: { stage?: string; style?: string },
 ): Promise<SonnetOutput> {
   await new Promise((r) => setTimeout(r, 2_000));
 
+  const mockStage = "FOMO";
+  const hintDisagrees = hints.stage != null && hints.stage !== mockStage;
+
   return {
-    detectedStage: "FOMO",
+    detectedStage: mockStage,
     confidence: "high",
-    modelAgreesWithHint: null,
-    disagreementReason: null,
+    modelAgreesWithHint: hints.stage == null ? null : !hintDisagrees,
+    disagreementReason: hintDisagrees
+      ? `Mock: the text shows urgency patterns typical for ${mockStage}, not ${hints.stage}.`
+      : null,
     modules: {
       VISUAL_HOOK: "contrast",
       VISUAL_DRAMA: "urgency",

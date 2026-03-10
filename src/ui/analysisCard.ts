@@ -85,5 +85,5 @@ export function stagePickerKeyboard(): ReplyMarkup {
   const row2 = stages.slice(4).map((s) =>
     BotKeyboard.callback(s, `stage:set:${s}`),
   );
-  return BotKeyboard.inline([row1, row2]);
+  return BotKeyboard.inline([row1, row2, [BotKeyboard.callback("↩️ Назад", "stage:back")]]);
 }

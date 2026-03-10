@@ -5,6 +5,7 @@ import { globalState } from "./session.js";
 import { handleStart, handleCancel } from "./handlers/onCommand.js";
 import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
+import { handleDevCallback } from "./handlers/onDevPanel.js";
 
 export function registerBotHandlers(
   tg: TelegramClient,
@@ -42,12 +43,29 @@ export function registerBotHandlers(
     await handleMessage(tg, msg);
   });
 
-  // Callback queries from authorized users (non-dev callbacks)
+  // Single unified callback handler for ALL inline button clicks
   dp.onCallbackQuery(async (cb) => {
     const uid = cb.user.id;
-    if (uid === devTgId && !globalState.devUserMode) return;
-    if (!isAuthorized(uid)) return;
-    if (cb.dataStr?.startsWith("dev:")) return;
+
+    // Dev panel callbacks — only for dev user
+    if (cb.dataStr?.startsWith("dev:")) {
+      if (uid === devTgId) {
+        await handleDevCallback(tg, cb, devTgId);
+      } else {
+        await cb.answer({});
+      }
+      return;
+    }
+
+    // Regular callbacks — dev user must be in user mode
+    if (uid === devTgId && !globalState.devUserMode) {
+      await cb.answer({});
+      return;
+    }
+    if (!isAuthorized(uid)) {
+      await cb.answer({});
+      return;
+    }
     await handleCallback(tg, cb);
   });
 }
