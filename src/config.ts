@@ -51,7 +51,7 @@ export const CONFIG = {
         promptHint: "Color palette, font weight, and background style reference only. Do not reproduce any text, layout, or people from this image.",
       },
       {
-        path: "./assets/banner_ref_2.jpg" as string | null,
+        path: null as string | null,
         role: "style" as const,
         promptHint: "Alternative background and composition style reference. Do not reproduce any text, layout, or people from this image.",
       },
