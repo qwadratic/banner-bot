@@ -215,12 +215,12 @@ function plain(s: string): string {
 
 function formatCheckResult(r: CheckResult): string {
   const icon = r.error ? "❌" : "✅";
-  let line = `${icon} **${r.label}**  \`${plain(r.model)}\`  ${r.elapsed}ms`;
+  let line = `${icon} **${r.label}**  ${plain(r.model)}  ${r.elapsed}ms`;
   if (r.error) {
     line += `\n  ${plain(r.error.slice(0, 800))}`;
   }
   if (r.rawContent != null) {
-    line += `\n  → \`${plain(r.rawContent.slice(0, 200))}\``;
+    line += `\n  → ${plain(r.rawContent.slice(0, 200))}`;
   }
   if (r.imageBase64) {
     const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
