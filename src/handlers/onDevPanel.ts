@@ -1,4 +1,4 @@
-import { TelegramClient, BotKeyboard, InputMedia } from "@mtcute/node";
+import { TelegramClient, BotKeyboard, InputMedia, md } from "@mtcute/node";
 import { Dispatcher, filters } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
 import { globalState } from "../session.js";
@@ -205,12 +205,12 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
 
 function formatCheckResult(r: CheckResult): string {
   const icon = r.error ? "❌" : "✅";
-  let line = `${icon} ${r.label}  ${r.model}  ${r.elapsed}ms`;
+  let line = `${icon} *${r.label}*  \`${r.model}\`  ${r.elapsed}ms`;
   if (r.error) {
-    line += `\n   ${r.error.slice(0, 400)}`;
+    line += `\n   ${md.escape(r.error.slice(0, 400))}`;
   }
   if (r.rawContent != null) {
-    line += `\n   → ${r.rawContent.slice(0, 300)}`;
+    line += `\n   → \`${md.escape(r.rawContent.slice(0, 200))}\``;
   }
   if (r.imageBase64) {
     const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
@@ -225,7 +225,7 @@ async function runHealthCheck(
 ): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    await tg.sendText(devTgId, "🔬 Health check\n\n❌ OPENROUTER_API_KEY not set");
+    await tg.sendText(devTgId, "🔬 Health check\n\n❌ OPENROUTER\_API\_KEY not set");
     return;
   }
 
@@ -234,29 +234,34 @@ async function runHealthCheck(
     HEALTHCHECK_MODELS.map((c) => probeModel(c, apiKey)),
   );
 
-  // Build single text message
-  const lines = ["🔬 Health check\n"];
+  // Build report text
+  const lines = ["🔬 *Health check*\n"];
   for (const r of results) {
     lines.push(formatCheckResult(r));
   }
-  await tg.sendText(devTgId, lines.join("\n"));
+  const report = lines.join("\n");
 
-  // Send image attachment separately (if any)
-  for (const r of results) {
-    if (r.imageBase64 && r.imageMime) {
-      try {
-        const buf = Buffer.from(r.imageBase64, "base64");
-        const ext = r.imageMime.split("/")[1] || "png";
-        await tg.sendMedia(
-          devTgId,
-          InputMedia.photo(new Uint8Array(buf), { fileName: `healthcheck.${ext}` }),
-          { caption: `🔬 ${r.label} model output` },
-        );
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        await tg.sendText(devTgId, `⚠️ Failed to send ${r.label} image: ${msg.slice(0, 300)}`);
-      }
+  // Find the first image result (if any) to attach to the report
+  const imgResult = results.find((r) => r.imageBase64 && r.imageMime);
+
+  if (imgResult?.imageBase64 && imgResult.imageMime) {
+    // Send as photo with the full report as caption
+    try {
+      const buf = Buffer.from(imgResult.imageBase64, "base64");
+      const ext = imgResult.imageMime.split("/")[1] || "png";
+      await tg.sendMedia(
+        devTgId,
+        InputMedia.photo(new Uint8Array(buf), { fileName: `healthcheck.${ext}` }),
+        { caption: md(report) },
+      );
+    } catch (e) {
+      // If photo send fails, fall back to text-only
+      const errMsg = e instanceof Error ? e.message : String(e);
+      await tg.sendText(devTgId, md(`${report}\n\n⚠️ _Failed to attach image: ${md.escape(errMsg.slice(0, 200))}_`));
     }
+  } else {
+    // No image — send text-only
+    await tg.sendText(devTgId, md(report));
   }
 }
 
