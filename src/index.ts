@@ -60,7 +60,7 @@ async function main() {
   console.log(`PID: ${process.pid}`);
 
   // Set bot commands visible in menu
-  await tg.call({ _: "bots.setBotCommands", scope: { _: "botCommandScopeDefault" }, lang_code: "", commands: [
+  await tg.call({ _: "bots.setBotCommands", scope: { _: "botCommandScopeDefault" }, langCode: "", commands: [
     { _: "botCommand", command: "start", description: "Начать" },
   ] });
 
