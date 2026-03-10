@@ -7,15 +7,15 @@ import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
 import { handleDevCallback } from "./handlers/onDevPanel.js";
 import { handleConfigCallback, handleConfigInput } from "./handlers/onDevConfig.js";
+import { getAdminUserIds } from "./runtimeConfig.js";
 
 export function registerBotHandlers(
   tg: TelegramClient,
   dp: Dispatcher,
-  adminUserIds: number[],
   devTgId: number,
 ): void {
   const isAuthorized = (userId: number): boolean => {
-    return adminUserIds.includes(userId) || userId === devTgId;
+    return getAdminUserIds().includes(userId) || userId === devTgId;
   };
 
   const isAuthorizedUser = (msg: MessageContext): boolean => {

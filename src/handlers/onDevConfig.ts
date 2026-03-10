@@ -14,6 +14,7 @@ import {
   setBannerStyle, setBannerAnnotation, deleteBannerStyle,
   setStageModuleDefault, addModuleOption, removeModuleOption,
   resetField, hasOverride,
+  addAdminUserId,
 } from "../runtimeConfig.js";
 
 const PROJECT_ROOT = path.resolve(
@@ -790,6 +791,18 @@ export async function handleConfigInput(
       const idx = parseInt(target.slice(5), 10);
       setBannerAnnotation(idx, text);
       await tg.sendText(uid, `✅ Banner ${idx + 1} annotation updated.`);
+    } else if (target === "admin_add") {
+      const id = parseInt(text, 10);
+      if (isNaN(id) || id <= 0) {
+        await tg.sendText(uid, "❌ Invalid user ID. Must be a positive number.");
+      } else {
+        const added = addAdminUserId(id);
+        if (added) {
+          await tg.sendText(uid, `✅ Added admin: ${id}`);
+        } else {
+          await tg.sendText(uid, `⚠️ ${id} is already an admin.`);
+        }
+      }
     } else if (target.startsWith("mod_add_")) {
       const category = target.slice(8);
       const option = text.replace(/\s+/g, "_").toLowerCase();
