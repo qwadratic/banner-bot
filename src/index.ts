@@ -88,6 +88,7 @@ async function main() {
           BotKeyboard.callback("🔄 Restart", "dev:restart"),
           BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
         ],
+        [BotKeyboard.callback("👤 User mode", "dev:usermode")],
         [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
       ]),
     },

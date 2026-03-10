@@ -293,22 +293,6 @@ export function registerDevPanel(
   dp: Dispatcher,
   devTgId: number,
 ): void {
-  // Handle all messages from dev user
-  dp.onNewMessage(filters.userId(devTgId), async (msg) => {
-    // If dev is in user mode with an active session, let message through
-    if (
-      globalState.devUserMode &&
-      globalState.activeSession?.userId === devTgId
-    ) {
-      return;
-    }
-
-    // Show dev panel
-    await msg.answerText(devPanelText(), {
-      replyMarkup: devPanelKeyboard(),
-    });
-  });
-
   // Handle callback queries from dev user
   dp.onCallbackQuery(filters.userId(devTgId), async (cb) => {
     const data = cb.dataStr;
