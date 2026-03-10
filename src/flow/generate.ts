@@ -7,8 +7,7 @@ import { getImageTemplate, getDoctorPortrait, getBannerStyles } from "../runtime
 import { devAlert } from "../devAlert.js";
 import { globalState } from "../session.js";
 import { mockGenerateImage } from "./mocks.js";
-
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { fetchOpenRouter, withRetries } from "./openrouter.js";
 
 // Resolve to project root (two levels up from src/flow/ or dist/flow/)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -62,7 +61,6 @@ async function loadReferenceAssets(detectedStage: string): Promise<ReferenceAsse
       });
     } catch (err) {
       await devAlert("generate / missing asset", err, { path: ref.path, role: ref.role });
-      // Proceed without this reference
     }
   }
 
@@ -74,9 +72,6 @@ export async function generateImage(
   detectedStage: string,
 ): Promise<Buffer> {
   if (globalState.testMode) return mockGenerateImage(prompt, detectedStage);
-
-  const apiKey = process.env.OPENROUTER_API_KEY!;
-  const { attempts, delayMs } = CONFIG.retry.imageGen;
 
   const loadedRefs = await loadReferenceAssets(detectedStage);
 
@@ -100,52 +95,21 @@ export async function generateImage(
 
   contentBlocks.push({ type: "text", text: prompt });
 
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), CONFIG.timeouts.imageGen);
-
-      const resp = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+  return withRetries({
+    attempts: CONFIG.retry.imageGen.attempts,
+    delayMs: CONFIG.retry.imageGen.delayMs,
+    context: "generate",
+    meta: { detectedStage },
+    fn: async () => {
+      const data = await fetchOpenRouter({
+        body: {
           model: resolvedModels.image,
           max_tokens: 1,
-          messages: [
-            {
-              role: "user",
-              content: contentBlocks,
-            },
-          ],
-          image_config: {
-            aspect_ratio: "16:9",
-          },
-        }),
-        signal: ctrl.signal,
+          messages: [{ role: "user", content: contentBlocks }],
+          image_config: { aspect_ratio: "16:9" },
+        },
+        timeoutMs: CONFIG.timeouts.imageGen,
       });
-      clearTimeout(timer);
-
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 500)}`);
-      }
-
-      const data = (await resp.json()) as {
-        choices?: Array<{
-          message?: {
-            content?: string;
-            images?: Array<{ image_url?: { url?: string } }>;
-          };
-        }>;
-        error?: { message?: string };
-      };
-
-      if (data.error) {
-        throw new Error(`API error: ${data.error.message ?? JSON.stringify(data.error)}`);
-      }
 
       // Extract image from response
       const message = data.choices?.[0]?.message;
@@ -170,7 +134,7 @@ export async function generateImage(
       }
 
       if (!imageBase64) {
-        const msgDump = JSON.stringify(message, (_k, v) => {
+        const msgDump = JSON.stringify(message, (_k: string, v: unknown) => {
           if (typeof v === "string" && v.length > 200) return v.slice(0, 200) + "...";
           return v;
         });
@@ -178,24 +142,6 @@ export async function generateImage(
       }
 
       return Buffer.from(imageBase64, "base64");
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.name === "AbortError";
-
-      if (isTimeout) {
-        await devAlert("generate / timeout", err, { detectedStage });
-        throw err;
-      }
-
-      if (attempt < attempts) {
-        await devAlert(`generate / error (attempt ${attempt})`, err, { detectedStage });
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-
-      await devAlert("generate / error after retries", err, { detectedStage });
-      throw err;
-    }
-  }
-
-  throw new Error("Exhausted retries");
+    },
+  });
 }

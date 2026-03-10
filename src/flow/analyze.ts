@@ -1,18 +1,14 @@
+import { MODULE_KEYS, globalState } from "../session.js";
 import type { SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
 import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
-import { devAlert } from "../devAlert.js";
-import { globalState } from "../session.js";
 import { mockAnalyzeMessage, mockReanalyzeForStage } from "./mocks.js";
-
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
+import { fetchOpenRouter, withRetries, VALID_CONFIDENCES } from "./openrouter.js";
 
 const VALID_STAGES = new Set([
   "Attention", "Identification", "Problem", "Insight",
   "Authority", "Micro-value", "Possibility", "FOMO",
 ]);
-const VALID_CONFIDENCES = new Set(["high", "medium", "low"]);
-const MODULE_KEYS = ["VISUAL_HOOK", "VISUAL_DRAMA", "COMPOSITION", "MAIN_ELEMENT", "SCROLL_EFFECT"] as const;
 
 function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
   if (typeof obj !== "object" || obj === null) return false;
@@ -30,11 +26,10 @@ function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
 
 function buildStageModuleTable(): string {
   const defaults = getStageModuleDefaults();
-  const modKeys = ["VISUAL_HOOK", "VISUAL_DRAMA", "COMPOSITION", "MAIN_ELEMENT", "SCROLL_EFFECT"];
-  const header = `| Stage | ${modKeys.join(" | ")} |`;
-  const sep = `|${modKeys.map(() => "---").concat("---").join("|")}|`;
+  const header = `| Stage | ${MODULE_KEYS.join(" | ")} |`;
+  const sep = `|${MODULE_KEYS.map(() => "---").concat("---").join("|")}|`;
   const rows = Object.entries(defaults).map(([stage, mods]) => {
-    const vals = modKeys.map((k) => mods[k] ?? "");
+    const vals = MODULE_KEYS.map((k) => mods[k] ?? "");
     return `| ${stage} | ${vals.join(" | ")} |`;
   });
   return [header, sep, ...rows].join("\n");
@@ -86,26 +81,28 @@ Field instructions:
 - "disagreementReason": one sentence in English explaining why you chose a different stage. null if no disagreement.`;
 }
 
+function extractTextContent(data: { choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }> }): string {
+  const content = data.choices?.[0]?.message?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const textBlock = content.find((b) => b.type === "text");
+    return textBlock?.text ?? "";
+  }
+  return "";
+}
+
 async function callSonnet(
   systemPrompt: string,
   userMessage: string,
   context: string,
 ): Promise<SonnetOutput> {
-  const apiKey = process.env.OPENROUTER_API_KEY!;
-  const { attempts, delayMs } = CONFIG.retry.analyze;
-
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), CONFIG.timeouts.analyze);
-
-      const resp = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
+  return withRetries({
+    attempts: CONFIG.retry.analyze.attempts,
+    delayMs: CONFIG.retry.analyze.delayMs,
+    context,
+    fn: async () => {
+      const data = await fetchOpenRouter({
+        body: {
           model: resolvedModels.analyze,
           max_tokens: 4000,
           thinking: { type: "enabled", budget_tokens: 8000 },
@@ -113,87 +110,22 @@ async function callSonnet(
             { role: "system", content: systemPrompt },
             { role: "user", content: userMessage },
           ],
-        }),
-        signal: ctrl.signal,
+        },
+        timeoutMs: CONFIG.timeouts.analyze,
       });
-      clearTimeout(timer);
 
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 500)}`);
-      }
-
-      const data = (await resp.json()) as {
-        choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }>;
-        error?: { message?: string };
-      };
-
-      if (data.error) {
-        throw new Error(`API error: ${data.error.message ?? JSON.stringify(data.error)}`);
-      }
-
-      // Extract text content — may be a string or an array with thinking + text blocks
-      let rawText = "";
-      const content = data.choices?.[0]?.message?.content;
-      if (typeof content === "string") {
-        rawText = content;
-      } else if (Array.isArray(content)) {
-        const textBlock = content.find((b) => b.type === "text");
-        rawText = textBlock?.text ?? "";
-      }
-
-      // Strip markdown fences
+      const rawText = extractTextContent(data);
       const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        if (attempt < attempts) {
-          await devAlert(`${context} / JSON parse failure (attempt ${attempt})`, new Error(`Raw: ${rawText.slice(0, 500)}`));
-          await new Promise((r) => setTimeout(r, delayMs));
-          continue;
-        }
-        await devAlert(`${context} / JSON parse failure after retries`, new Error(`Raw: ${rawText.slice(0, 500)}`));
-        throw new Error("JSON parse failure after retries");
-      }
+      const parsed = JSON.parse(cleaned) as unknown; // throws → triggers retry
 
       if (!isValidSonnetOutput(parsed)) {
-        if (attempt < attempts) {
-          await devAlert(`${context} / invalid fields (attempt ${attempt})`, new Error(`Parsed: ${JSON.stringify(parsed).slice(0, 500)}`));
-          await new Promise((r) => setTimeout(r, delayMs));
-          continue;
-        }
-        await devAlert(`${context} / invalid fields after retries`, new Error(`Parsed: ${JSON.stringify(parsed).slice(0, 500)}`));
-        throw new Error("Invalid Sonnet output after retries");
+        throw new Error(`Invalid fields. Parsed: ${JSON.stringify(parsed).slice(0, 500)}`);
       }
 
       return parsed;
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.name === "AbortError";
-
-      if (isTimeout) {
-        await devAlert(`${context} / timeout`, err);
-        throw err;
-      }
-
-      // If it's our own validation error, rethrow after last attempt
-      if (err instanceof Error && (err.message.includes("after retries") || err.message.includes("parse failure"))) {
-        throw err;
-      }
-
-      if (attempt < attempts) {
-        await devAlert(`${context} / API error (attempt ${attempt})`, err);
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-
-      await devAlert(`${context} / API error after retries`, err);
-      throw err;
-    }
-  }
-
-  throw new Error("Exhausted retries");
+    },
+  });
 }
 
 export async function analyzeMessage(

@@ -1,6 +1,7 @@
 import { BotKeyboard } from "@mtcute/node";
 import type { ReplyMarkup } from "@mtcute/node";
 import { getModuleOptions } from "../runtimeConfig.js";
+import { getEffectiveModules } from "../session.js";
 import type { Session, ModuleSet } from "../session.js";
 
 export function moduleEditorText(session: Session): string {
@@ -51,7 +52,3 @@ export function moduleCategoryKeyboard(category: string, session: Session): Repl
   return BotKeyboard.inline(rows);
 }
 
-function getEffectiveModules(session: Session): ModuleSet | null {
-  if (!session.modules) return null;
-  return { ...session.modules, ...session.userOverrides } as ModuleSet;
-}

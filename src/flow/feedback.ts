@@ -1,10 +1,9 @@
+import { getEffectiveModules } from "../session.js";
 import type { Session } from "../session.js";
 import { insertFeedback } from "../db/feedback.js";
 
 export function saveFeedback(session: Session, rating: number, comment: string | null): void {
-  const effectiveModules = session.modules
-    ? { ...session.modules, ...session.userOverrides }
-    : null;
+  const effectiveModules = getEffectiveModules(session);
 
   insertFeedback({
     userId: session.userId,

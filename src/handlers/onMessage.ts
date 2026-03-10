@@ -4,7 +4,6 @@ import { CONFIG } from "../config.js";
 import { globalState, createSession, touchSession } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import { classifyMessage, GateTimeoutError } from "../flow/gate.js";
-import { analyzeMessage } from "../flow/analyze.js";
 import { stageStepText, stageStepKeyboard } from "../ui/hintSelector.js";
 
 export async function handleMessage(tg: TelegramClient, msg: MessageContext): Promise<void> {

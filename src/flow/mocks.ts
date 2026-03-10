@@ -6,6 +6,7 @@
 
 import * as zlib from "node:zlib";
 import type { SonnetOutput, ModuleSet } from "../session.js";
+import type { GateResult } from "./openrouter.js";
 import { getStageModuleDefaults } from "../runtimeConfig.js";
 
 // ── Delays (simulate network latency) ────────────────────────────────────
@@ -19,8 +20,6 @@ function delay(ms: number): Promise<void> {
 }
 
 // ── Gate mock ────────────────────────────────────────────────────────────
-
-type GateResult = { isFunnelMessage: boolean; confidence: "high" | "medium" | "low" };
 
 /**
  * Short / obviously non-funnel text → rejected.

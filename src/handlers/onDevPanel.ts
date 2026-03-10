@@ -1,5 +1,4 @@
 import { TelegramClient, BotKeyboard, InputMedia, md } from "@mtcute/node";
-import { Dispatcher, filters } from "@mtcute/dispatcher";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
 import { globalState } from "../session.js";
@@ -32,7 +31,7 @@ function devPanelText(): string {
   return `🛠 Dev Panel${testTag}  |  Session: none`;
 }
 
-function devPanelKeyboard() {
+export function devPanelKeyboard() {
   const session = globalState.activeSession;
   const testLabel = globalState.testMode ? "🧪 Test mode: ON" : "🧪 Test mode: OFF";
   const rows = [
@@ -411,15 +410,4 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       // ignore
     }
   }
-}
-
-export function registerDevPanel(
-  tg: TelegramClient,
-  dp: Dispatcher,
-  devTgId: number,
-): void {
-  // Dev panel callback handling is now done via handleDevCallback(),
-  // called from the single unified callback handler in router.ts.
-  // No separate onCallbackQuery registration here — avoids
-  // swallowing non-dev callbacks from the dev user in user mode.
 }

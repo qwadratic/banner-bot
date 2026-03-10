@@ -3,12 +3,8 @@ import { getHaikuPrompt } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
 import { globalState } from "../session.js";
 import { mockClassifyMessage } from "./mocks.js";
-
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-
-type GateResult = { isFunnelMessage: boolean; confidence: "high" | "medium" | "low" };
-
-const VALID_CONFIDENCES = new Set(["high", "medium", "low"]);
+import { fetchOpenRouter, withRetries, VALID_CONFIDENCES } from "./openrouter.js";
+import type { GateResult } from "./openrouter.js";
 
 function isValidGateResult(obj: unknown): obj is GateResult {
   if (typeof obj !== "object" || obj === null) return false;
@@ -19,86 +15,53 @@ function isValidGateResult(obj: unknown): obj is GateResult {
 export async function classifyMessage(inputText: string): Promise<GateResult> {
   if (globalState.testMode) return mockClassifyMessage(inputText);
 
-  const apiKey = process.env.OPENROUTER_API_KEY!;
-  const { attempts, delayMs } = CONFIG.retry.gate;
+  const meta = { inputText: inputText.slice(0, 200) };
 
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    try {
-      const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), CONFIG.timeouts.gate);
+  try {
+    return await withRetries({
+      attempts: CONFIG.retry.gate.attempts,
+      delayMs: CONFIG.retry.gate.delayMs,
+      context: "gate",
+      meta,
+      fn: async () => {
+        const data = await fetchOpenRouter({
+          body: {
+            model: resolvedModels.gate,
+            max_tokens: 100,
+            messages: [
+              { role: "system", content: getHaikuPrompt() },
+              { role: "user", content: inputText },
+            ],
+          },
+          timeoutMs: CONFIG.timeouts.gate,
+        });
 
-      const resp = await fetch(OPENROUTER_URL, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: resolvedModels.gate,
-          max_tokens: 100,
-          messages: [
-            { role: "system", content: getHaikuPrompt() },
-            { role: "user", content: inputText },
-          ],
-        }),
-        signal: ctrl.signal,
-      });
-      clearTimeout(timer);
+        const rawText = data.choices?.[0]?.message?.content ?? "";
+        const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
 
-      if (!resp.ok) {
-        const body = await resp.text().catch(() => "");
-        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 500)}`);
-      }
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          // JSON parse failure — fail open
+          await devAlert("gate / JSON parse failure", new Error(`Raw: ${rawText.slice(0, 500)}`), meta);
+          return { isFunnelMessage: true, confidence: "low" as const };
+        }
 
-      const data = (await resp.json()) as {
-        choices?: Array<{ message?: { content?: string } }>;
-        error?: { message?: string };
-      };
+        if (!isValidGateResult(parsed)) {
+          await devAlert("gate / invalid fields", new Error(`Parsed: ${JSON.stringify(parsed)}`), meta);
+          return { isFunnelMessage: true, confidence: "low" as const };
+        }
 
-      if (data.error) {
-        throw new Error(`API error: ${data.error.message ?? JSON.stringify(data.error)}`);
-      }
-
-      const rawText = data.choices?.[0]?.message?.content ?? "";
-      // Strip markdown fences if present
-      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
-
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(cleaned);
-      } catch {
-        // JSON parse failure — fail open
-        await devAlert("gate / JSON parse failure", new Error(`Raw response: ${rawText.slice(0, 500)}`), { inputText: inputText.slice(0, 200) });
-        return { isFunnelMessage: true, confidence: "low" };
-      }
-
-      if (!isValidGateResult(parsed)) {
-        // Missing fields — fail open
-        await devAlert("gate / invalid fields", new Error(`Parsed: ${JSON.stringify(parsed)}`), { inputText: inputText.slice(0, 200) });
-        return { isFunnelMessage: true, confidence: "low" };
-      }
-
-      return parsed;
-    } catch (err) {
-      const isTimeout = err instanceof Error && err.name === "AbortError";
-
-      if (isTimeout) {
-        await devAlert("gate / timeout", err, { inputText: inputText.slice(0, 200) });
-        throw new GateTimeoutError();
-      }
-
-      if (attempt < attempts) {
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
-      }
-
-      await devAlert("gate / API error after retries", err, { inputText: inputText.slice(0, 200) });
-      throw new GateApiError(err instanceof Error ? err.message : String(err));
+        return parsed;
+      },
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new GateTimeoutError();
     }
+    throw new GateApiError(err instanceof Error ? err.message : String(err));
   }
-
-  // Unreachable, but TypeScript needs it
-  throw new GateApiError("Exhausted retries");
 }
 
 export class GateTimeoutError extends Error {

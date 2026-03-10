@@ -1,9 +1,9 @@
 import "dotenv/config";
 import { TelegramClient, BotKeyboard } from "@mtcute/node";
-import { Dispatcher, filters } from "@mtcute/dispatcher";
+import { Dispatcher } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
-import { registerDevPanel } from "./handlers/onDevPanel.js";
 import { registerBotHandlers } from "./router.js";
+import { devPanelKeyboard } from "./handlers/onDevPanel.js";
 import { initFeedbackDb } from "./db/feedback.js";
 import { initRuntimeConfig } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
@@ -51,9 +51,6 @@ process.on("unhandledRejection", (reason) => {
   // Do not exit — keep bot running
 });
 
-// Register dev panel handler (must be first — takes priority)
-registerDevPanel(tg, dp, DEV_TG_ID);
-
 // Register bot handlers for admin users
 registerBotHandlers(tg, dp, ADMIN_USER_IDS, DEV_TG_ID);
 
@@ -81,24 +78,16 @@ async function main() {
     ],
   });
 
+  const panel = devPanelKeyboard();
+  const startupKeyboard = BotKeyboard.inline([
+    ...panel.buttons,
+    [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
+  ]);
+
   await tg.sendText(
     DEV_TG_ID,
     `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`,
-    {
-      replyMarkup: BotKeyboard.inline([
-        [
-          BotKeyboard.callback("📊 Status", "dev:status"),
-          BotKeyboard.callback("🔬 Health check", "dev:healthcheck"),
-        ],
-        [
-          BotKeyboard.callback("🔄 Restart", "dev:restart"),
-          BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
-        ],
-        [BotKeyboard.callback("⚙️ Config", "cfg:main")],
-        [BotKeyboard.callback("👤 User mode", "dev:usermode")],
-        [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
-      ]),
-    },
+    { replyMarkup: startupKeyboard },
   );
 }
 
