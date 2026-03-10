@@ -409,9 +409,9 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
 
       case "adm_add": {
         await cb.answer({});
-        globalState.devConfigAwait = { type: "text", target: "admin_add", userId: devTgId };
+        globalState.devConfigAwait = { type: "admin_add", userId: devTgId };
         await cb.editMessage({
-          text: "👥 Send the Telegram user ID to add as admin:",
+          text: "👥 Add admin — send one of:\n• @username\n• forwarded message from the user\n• shared contact",
           replyMarkup: BotKeyboard.inline([
             [BotKeyboard.callback("✕ Cancel", "dev:admins")],
           ]),
