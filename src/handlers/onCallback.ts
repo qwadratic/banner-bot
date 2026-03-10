@@ -86,6 +86,26 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
   }
 }
 
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Deactivate an interactive message: replace text with an action note and
+ * strip the inline keyboard. Works for text messages (replaces text) and
+ * media messages (updates caption). Falls back to just removing the keyboard
+ * if the text edit fails.
+ */
+async function deactivateMessage(cb: CallbackQueryContext, note: string): Promise<void> {
+  try {
+    await cb.editMessage({ text: note });
+  } catch {
+    try {
+      await cb.editMessage({ replyMarkup: BotKeyboard.inline([]) });
+    } catch {
+      // Ignore — message may have been deleted
+    }
+  }
+}
+
 // ── Hint selection (two-step) ────────────────────────────────────────────
 
 async function handleHintStage(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
@@ -211,16 +231,18 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
 // ── Generation ───────────────────────────────────────────────────────────
 
 async function handleGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "confirm" || value === "same") {
-    await doGenerate(tg, cb, session, false);
+  if (value === "confirm") {
+    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
+  } else if (value === "same") {
+    await doGenerate(tg, cb, session, false, "🔁 Повторна генерація");
   } else if (value === "variation") {
-    await doGenerate(tg, cb, session, true);
+    await doGenerate(tg, cb, session, true, "🎲 Варіація");
   } else {
     await cb.answer({});
   }
 }
 
-async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean): Promise<void> {
+async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean, sourceNote: string): Promise<void> {
   if (!session.modules || !session.sonnetOutput) {
     await cb.answer({ text: "Немає даних для генерації" });
     return;
@@ -228,6 +250,7 @@ async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session:
 
   session.phase = "GENERATING";
   await cb.answer({});
+  await deactivateMessage(cb, sourceNote);
   await tg.sendText(session.userId, CONFIG.ui.generating);
 
   try {
@@ -370,7 +393,7 @@ async function handleModules(tg: TelegramClient, cb: CallbackQueryContext, sessi
       replyMarkup: moduleEditorKeyboard(session),
     });
   } else if (value === "done") {
-    await doGenerate(tg, cb, session, false);
+    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
   } else if (value === "back") {
     session.phase = "ANALYSIS_READY";
     await cb.answer({});
@@ -428,6 +451,7 @@ async function handleFeedback(tg: TelegramClient, cb: CallbackQueryContext, sess
   if (value === "start") {
     session.phase = "AWAITING_FEEDBACK_RATING";
     await cb.answer({});
+    await deactivateMessage(cb, "⭐ Оцінка");
     await tg.sendText(session.userId, "Як вам результат?", {
       replyMarkup: BotKeyboard.inline([
         [1, 2, 3, 4, 5].map((n) =>
@@ -472,6 +496,7 @@ async function handleSession(tg: TelegramClient, cb: CallbackQueryContext, sessi
   if (value === "end") {
     globalState.activeSession = null;
     await cb.answer({});
+    await deactivateMessage(cb, "❌ Сесію завершено");
     await tg.sendText(session.userId, CONFIG.ui.sessionEnded);
   } else {
     await cb.answer({});
