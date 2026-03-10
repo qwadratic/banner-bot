@@ -7,7 +7,10 @@ import { devAlert } from "../devAlert.js";
 import { analyzeMessage, reanalyzeForStage } from "../flow/analyze.js";
 import { assemblePrompt, generateImage } from "../flow/generate.js";
 import { saveFeedback } from "../flow/feedback.js";
-import { hintSelectorText, hintSelectorKeyboard } from "../ui/hintSelector.js";
+import {
+  stageStepText, stageStepKeyboard,
+  styleStepText, styleStepKeyboard,
+} from "../ui/hintSelector.js";
 import { analysisCardText, analysisCardKeyboard, stagePickerKeyboard } from "../ui/analysisCard.js";
 import { moduleEditorText, moduleEditorKeyboard, moduleCategoryKeyboard } from "../ui/moduleEditor.js";
 
@@ -83,10 +86,10 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
   }
 }
 
-// ── Hint selection ───────────────────────────────────────────────────────
+// ── Hint selection (two-step) ────────────────────────────────────────────
 
 async function handleHintStage(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (session.phase !== "HINT_STAGE") {
     await cb.answer({});
     return;
   }
@@ -100,13 +103,13 @@ async function handleHintStage(cb: CallbackQueryContext, session: Session, value
 
   await cb.answer({});
   await cb.editMessage({
-    text: hintSelectorText(),
-    replyMarkup: hintSelectorKeyboard(session),
+    text: stageStepText(session),
+    replyMarkup: stageStepKeyboard(session),
   });
 }
 
 async function handleHintStyle(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (session.phase !== "HINT_STYLE") {
     await cb.answer({});
     return;
   }
@@ -119,23 +122,57 @@ async function handleHintStyle(cb: CallbackQueryContext, session: Session, value
 
   await cb.answer({});
   await cb.editMessage({
-    text: hintSelectorText(),
-    replyMarkup: hintSelectorKeyboard(session),
+    text: styleStepText(session),
+    replyMarkup: styleStepKeyboard(session),
   });
 }
 
 async function handleHints(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (value === "next") {
+    // Stage step → Style step
+    if (session.phase !== "HINT_STAGE") {
+      await cb.answer({});
+      return;
+    }
+    session.phase = "HINT_STYLE";
     await cb.answer({});
-    return;
+    await cb.editMessage({
+      text: styleStepText(session),
+      replyMarkup: styleStepKeyboard(session),
+    });
+  } else if (value === "skip_stage") {
+    // Skip stage, go to style step
+    if (session.phase !== "HINT_STAGE") {
+      await cb.answer({});
+      return;
+    }
+    delete session.selectedHints.stage;
+    session.phase = "HINT_STYLE";
+    await cb.answer({});
+    await cb.editMessage({
+      text: styleStepText(session),
+      replyMarkup: styleStepKeyboard(session),
+    });
+  } else if (value === "skip_style") {
+    // Skip style, run analysis
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    delete session.selectedHints.style;
+    await cb.answer({});
+    await runAnalysis(tg, cb, session);
+  } else if (value === "confirm") {
+    // Style step confirmed, run analysis
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    await cb.answer({});
+    await runAnalysis(tg, cb, session);
+  } else {
+    await cb.answer({});
   }
-
-  if (value === "skip") {
-    session.selectedHints = {};
-  }
-
-  await cb.answer({});
-  await runAnalysis(tg, cb, session);
 }
 
 // ── Analysis ─────────────────────────────────────────────────────────────
@@ -163,10 +200,10 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
     });
   } catch (err) {
     await devAlert("onCallback / runAnalysis", err, { userId: session.userId });
-    session.phase = "HINT_SELECTION";
+    session.phase = "HINT_STYLE";
     await cb.editMessage({
       text: CONFIG.ui.retryError,
-      replyMarkup: hintSelectorKeyboard(session),
+      replyMarkup: styleStepKeyboard(session),
     });
   }
 }
@@ -467,9 +504,9 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
           return;
         }
         newSession.inputText = pendingText;
-        newSession.phase = "HINT_SELECTION";
-        await tg.sendText(userId, hintSelectorText(), {
-          replyMarkup: hintSelectorKeyboard(newSession),
+        newSession.phase = "HINT_STAGE";
+        await tg.sendText(userId, stageStepText(newSession), {
+          replyMarkup: stageStepKeyboard(newSession),
         });
       } catch (err) {
         await devAlert("onCallback / interrupt:cancel / gate", err, { userId });

@@ -5,8 +5,7 @@ import { globalState, createSession, touchSession } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import { classifyMessage } from "../flow/gate.js";
 import { analyzeMessage } from "../flow/analyze.js";
-import { hintSelectorText, hintSelectorKeyboard } from "../ui/hintSelector.js";
-import { analysisCardText, analysisCardKeyboard } from "../ui/analysisCard.js";
+import { stageStepText, stageStepKeyboard } from "../ui/hintSelector.js";
 
 export async function handleMessage(tg: TelegramClient, msg: MessageContext): Promise<void> {
   const userId = msg.sender?.id;
@@ -85,10 +84,10 @@ async function processIncomingText(tg: TelegramClient, userId: number, text: str
     }
 
     session.inputText = text;
-    session.phase = "HINT_SELECTION";
+    session.phase = "HINT_STAGE";
 
-    await tg.sendText(userId, hintSelectorText(), {
-      replyMarkup: hintSelectorKeyboard(session),
+    await tg.sendText(userId, stageStepText(session), {
+      replyMarkup: stageStepKeyboard(session),
     });
   } catch (err) {
     await devAlert("onMessage / gate classification", err, { userId, phase: session.phase });
