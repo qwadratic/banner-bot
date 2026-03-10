@@ -21,18 +21,20 @@ function formatUptime(ms: number): string {
 }
 
 function devPanelText(): string {
+  const testTag = globalState.testMode ? "  🧪 TEST MODE" : "";
   const session = globalState.activeSession;
   if (session) {
     return (
-      `🛠 Dev Panel  |  Session: IN_PROGRESS\n` +
+      `🛠 Dev Panel${testTag}  |  Session: IN_PROGRESS\n` +
       `User: ${session.userId}  Phase: ${session.phase}`
     );
   }
-  return `🛠 Dev Panel  |  Session: none`;
+  return `🛠 Dev Panel${testTag}  |  Session: none`;
 }
 
 function devPanelKeyboard() {
   const session = globalState.activeSession;
+  const testLabel = globalState.testMode ? "🧪 Test mode: ON" : "🧪 Test mode: OFF";
   const rows = [
     [
       BotKeyboard.callback("📊 Status", "dev:status"),
@@ -42,7 +44,10 @@ function devPanelKeyboard() {
       BotKeyboard.callback("🔄 Restart", "dev:restart"),
       BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
     ],
-    [BotKeyboard.callback("⚙️ Config", "cfg:main")],
+    [
+      BotKeyboard.callback("⚙️ Config", "cfg:main"),
+      BotKeyboard.callback(testLabel, "dev:testmode"),
+    ],
   ];
 
   if (!session) {
@@ -358,6 +363,16 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
+      case "testmode": {
+        globalState.testMode = !globalState.testMode;
+        await cb.answer({ text: globalState.testMode ? "Test mode ON — API calls are mocked" : "Test mode OFF — real API calls" });
+        await cb.editMessage({
+          text: devPanelText(),
+          replyMarkup: devPanelKeyboard(),
+        });
+        break;
+      }
+
       case "usermode": {
         if (globalState.activeSession) {
           await cb.answer({
@@ -368,8 +383,9 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
 
         await cb.answer({});
         globalState.devUserMode = true;
+        const modeNote = globalState.testMode ? " (🧪 test mode)" : "";
         await cb.editMessage({
-          text: "👤 User mode active. Send your funnel message.",
+          text: `👤 User mode active${modeNote}. Send your funnel message.`,
         });
         break;
       }

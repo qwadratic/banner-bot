@@ -5,6 +5,8 @@ import type { ModuleSet, SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
 import { getImageTemplate, getDoctorPortrait, getBannerStyles } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
+import { globalState } from "../session.js";
+import { mockGenerateImage } from "./mocks.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -71,6 +73,8 @@ export async function generateImage(
   prompt: string,
   detectedStage: string,
 ): Promise<Buffer> {
+  if (globalState.testMode) return mockGenerateImage(prompt, detectedStage);
+
   const apiKey = process.env.OPENROUTER_API_KEY!;
   const { attempts, delayMs } = CONFIG.retry.imageGen;
 

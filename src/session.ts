@@ -70,12 +70,14 @@ export type GlobalState = {
   activeSession: Session | null;
   devUserMode: boolean;
   devConfigAwait: DevConfigAwait;
+  testMode: boolean;
 };
 
 export const globalState: GlobalState = {
   activeSession: null,
   devUserMode: false,
   devConfigAwait: null,
+  testMode: false,
 };
 
 export function createSession(userId: number): Session {

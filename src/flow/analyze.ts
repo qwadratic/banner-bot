@@ -2,6 +2,8 @@ import type { SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
 import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
+import { globalState } from "../session.js";
+import { mockAnalyzeMessage, mockReanalyzeForStage } from "./mocks.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -198,6 +200,8 @@ export async function analyzeMessage(
   inputText: string,
   hints: { stage?: string; style?: string },
 ): Promise<SonnetOutput> {
+  if (globalState.testMode) return mockAnalyzeMessage(inputText, hints);
+
   const userMessage = buildUserMessage(inputText, hints);
   return callSonnet(getSonnetPrompt(), userMessage, "analyze");
 }
@@ -207,6 +211,8 @@ export async function reanalyzeForStage(
   stage: string,
   hints: { style?: string },
 ): Promise<SonnetOutput> {
+  if (globalState.testMode) return mockReanalyzeForStage(inputText, stage, hints);
+
   const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
   return callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
 }

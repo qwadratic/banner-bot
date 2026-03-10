@@ -1,6 +1,8 @@
 import { CONFIG, resolvedModels } from "../config.js";
 import { getHaikuPrompt } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
+import { globalState } from "../session.js";
+import { mockClassifyMessage } from "./mocks.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -15,6 +17,8 @@ function isValidGateResult(obj: unknown): obj is GateResult {
 }
 
 export async function classifyMessage(inputText: string): Promise<GateResult> {
+  if (globalState.testMode) return mockClassifyMessage(inputText);
+
   const apiKey = process.env.OPENROUTER_API_KEY!;
   const { attempts, delayMs } = CONFIG.retry.gate;
 
