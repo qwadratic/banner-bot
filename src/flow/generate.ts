@@ -7,7 +7,9 @@ import { devAlert } from "../devAlert.js";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+// Resolve to project root (two levels up from src/flow/ or dist/flow/)
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PROJECT_ROOT = path.resolve(__dirname, "../..");
 
 interface ReferenceAsset {
   path: string | null;
@@ -46,7 +48,7 @@ async function loadReferenceAssets(detectedStage: string): Promise<ReferenceAsse
   for (const ref of refs) {
     if (!ref.path) continue;
     try {
-      const resolved = path.resolve(__dirname, ref.path);
+      const resolved = path.resolve(PROJECT_ROOT, ref.path);
       const buf = await fs.readFile(resolved);
       loaded.push({
         ...ref,
