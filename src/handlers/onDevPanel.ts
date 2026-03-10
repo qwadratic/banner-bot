@@ -1,5 +1,6 @@
 import { TelegramClient, BotKeyboard, InputMedia, md } from "@mtcute/node";
 import { Dispatcher, filters } from "@mtcute/dispatcher";
+import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
 import { globalState } from "../session.js";
 import { devAlert } from "../devAlert.js";
@@ -288,124 +289,121 @@ async function execShell(cmd: string): Promise<{ stdout: string; stderr: string;
   });
 }
 
+export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryContext, devTgId: number): Promise<void> {
+  const data = cb.dataStr;
+  if (!data?.startsWith("dev:")) {
+    await cb.answer({});
+    return;
+  }
+
+  const action = data.slice(4);
+
+  try {
+    switch (action) {
+      case "status": {
+        await cb.answer({});
+        await cb.editMessage({
+          text: statusText(),
+          replyMarkup: backKeyboard(),
+        });
+        break;
+      }
+
+      case "healthcheck": {
+        await cb.answer({ text: "Running health checks..." });
+        await runHealthCheck(tg, devTgId);
+        break;
+      }
+
+      case "restart": {
+        await cb.answer({});
+        await cb.editMessage({ text: "🔄 Restarting..." });
+        setTimeout(() => process.exit(0), 500);
+        break;
+      }
+
+      case "update": {
+        await cb.answer({});
+        await cb.editMessage({ text: "⬇️ Pulling latest code..." });
+
+        const gitResult = await execShell("git pull");
+        if (gitResult.code !== 0 || gitResult.stderr.includes("fatal")) {
+          const errorText =
+            gitResult.stderr || gitResult.stdout || "Unknown git error";
+          await tg.sendText(
+            devTgId,
+            `❌ Git pull failed:\n\n${errorText.slice(0, 3000)}`,
+          );
+          return;
+        }
+
+        await tg.sendText(
+          devTgId,
+          `✅ Git pull:\n${gitResult.stdout.slice(0, 2000)}`,
+        );
+
+        const npmResult = await execShell("npm install");
+        if (npmResult.code !== 0) {
+          const errorText =
+            npmResult.stderr || npmResult.stdout || "Unknown npm error";
+          await tg.sendText(
+            devTgId,
+            `❌ npm install failed:\n\n${errorText.slice(0, 3000)}`,
+          );
+          return;
+        }
+
+        await tg.sendText(devTgId, "🔄 Restarting...");
+        setTimeout(() => process.exit(0), 500);
+        break;
+      }
+
+      case "usermode": {
+        if (globalState.activeSession) {
+          await cb.answer({
+            text: "A session is already active",
+          });
+          return;
+        }
+
+        await cb.answer({});
+        globalState.devUserMode = true;
+        await cb.editMessage({
+          text: "👤 User mode active. Send your funnel message.",
+        });
+        break;
+      }
+
+      case "back": {
+        await cb.answer({});
+        await cb.editMessage({
+          text: devPanelText(),
+          replyMarkup: devPanelKeyboard(),
+        });
+        break;
+      }
+
+      default: {
+        await cb.answer({ text: "Unknown action" });
+      }
+    }
+  } catch (err) {
+    await devAlert(`onDevPanel / ${action}`, err);
+    try {
+      await cb.answer({ text: "Error — check alerts" });
+    } catch {
+      // ignore
+    }
+  }
+}
+
 export function registerDevPanel(
   tg: TelegramClient,
   dp: Dispatcher,
   devTgId: number,
 ): void {
-  // Handle callback queries from dev user
-  dp.onCallbackQuery(filters.userId(devTgId), async (cb) => {
-    const data = cb.dataStr;
-    if (!data?.startsWith("dev:")) {
-      // If dev is in user mode, let callback through
-      if (
-        globalState.devUserMode &&
-        globalState.activeSession?.userId === devTgId
-      ) {
-        return;
-      }
-      await cb.answer({});
-      return;
-    }
-
-    const action = data.slice(4);
-
-    try {
-      switch (action) {
-        case "status": {
-          await cb.answer({});
-          await cb.editMessage({
-            text: statusText(),
-            replyMarkup: backKeyboard(),
-          });
-          break;
-        }
-
-        case "healthcheck": {
-          await cb.answer({ text: "Running health checks..." });
-          await runHealthCheck(tg, devTgId);
-          break;
-        }
-
-        case "restart": {
-          await cb.answer({});
-          await cb.editMessage({ text: "🔄 Restarting..." });
-          setTimeout(() => process.exit(0), 500);
-          break;
-        }
-
-        case "update": {
-          await cb.answer({});
-          await cb.editMessage({ text: "⬇️ Pulling latest code..." });
-
-          const gitResult = await execShell("git pull");
-          if (gitResult.code !== 0 || gitResult.stderr.includes("fatal")) {
-            const errorText =
-              gitResult.stderr || gitResult.stdout || "Unknown git error";
-            await tg.sendText(
-              devTgId,
-              `❌ Git pull failed:\n\n${errorText.slice(0, 3000)}`,
-            );
-            return;
-          }
-
-          await tg.sendText(
-            devTgId,
-            `✅ Git pull:\n${gitResult.stdout.slice(0, 2000)}`,
-          );
-
-          const npmResult = await execShell("npm install");
-          if (npmResult.code !== 0) {
-            const errorText =
-              npmResult.stderr || npmResult.stdout || "Unknown npm error";
-            await tg.sendText(
-              devTgId,
-              `❌ npm install failed:\n\n${errorText.slice(0, 3000)}`,
-            );
-            return;
-          }
-
-          await tg.sendText(devTgId, "🔄 Restarting...");
-          setTimeout(() => process.exit(0), 500);
-          break;
-        }
-
-        case "usermode": {
-          if (globalState.activeSession) {
-            await cb.answer({
-              text: "A session is already active",
-            });
-            return;
-          }
-
-          await cb.answer({});
-          globalState.devUserMode = true;
-          await cb.editMessage({
-            text: "👤 User mode active. Send your funnel message.",
-          });
-          break;
-        }
-
-        case "back": {
-          await cb.answer({});
-          await cb.editMessage({
-            text: devPanelText(),
-            replyMarkup: devPanelKeyboard(),
-          });
-          break;
-        }
-
-        default: {
-          await cb.answer({ text: "Unknown action" });
-        }
-      }
-    } catch (err) {
-      await devAlert(`onDevPanel / ${action}`, err);
-      try {
-        await cb.answer({ text: "Error — check alerts" });
-      } catch {
-        // ignore
-      }
-    }
-  });
+  // Dev panel callback handling is now done via handleDevCallback(),
+  // called from the single unified callback handler in router.ts.
+  // No separate onCallbackQuery registration here — avoids
+  // swallowing non-dev callbacks from the dev user in user mode.
 }

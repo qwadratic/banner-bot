@@ -259,8 +259,10 @@ async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session
     await cb.answer({});
     await reanalyzeWithStage(tg, cb, session, stage);
   } else if (value === "use_model") {
-    // User accepts the model's suggested stage
+    // User accepts the model's suggested stage — clear conflict state
     session.modelAgreesWithHint = true;
+    session.disagreementReason = null;
+    session.selectedHints.stage = session.detectedStage ?? undefined;
     session.phase = "ANALYSIS_READY";
     await cb.answer({});
     await cb.editMessage({
@@ -276,6 +278,14 @@ async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session
     } else {
       await cb.answer({});
     }
+  } else if (value === "back") {
+    // Return to analysis card from stage picker
+    session.phase = "ANALYSIS_READY";
+    await cb.answer({});
+    await cb.editMessage({
+      text: analysisCardText(session),
+      replyMarkup: analysisCardKeyboard(session),
+    });
   } else {
     await cb.answer({});
   }
@@ -308,6 +318,7 @@ async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, 
     session.phase = "ANALYSIS_READY";
     await cb.editMessage({
       text: CONFIG.ui.retryError,
+      replyMarkup: analysisCardKeyboard(session),
     });
   }
 }
@@ -409,7 +420,10 @@ async function handleFeedback(tg: TelegramClient, cb: CallbackQueryContext, sess
     }
     session.phase = "RESULT_READY";
     await cb.answer({ text: "Дякую!" });
-    await cb.editMessage({ text: "Дякую за відгук! 🙏" });
+    await cb.editMessage({
+      text: "Дякую за відгук! 🙏",
+      replyMarkup: resultKeyboard(),
+    });
   } else {
     await cb.answer({});
   }

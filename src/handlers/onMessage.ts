@@ -40,7 +40,15 @@ export async function handleMessage(tg: TelegramClient, msg: MessageContext): Pr
     saveFeedback(session, session.pendingRating!, text);
     session.pendingRating = null;
     session.phase = "RESULT_READY";
-    await tg.sendText(userId, "Дякую за відгук! 🙏");
+    await tg.sendText(userId, "Дякую за відгук! 🙏", {
+      replyMarkup: BotKeyboard.inline([
+        [
+          BotKeyboard.callback("🔁 Повторити", "generate:same"),
+          BotKeyboard.callback("🎲 Варіація", "generate:variation"),
+        ],
+        [BotKeyboard.callback("❌ Завершити сесію", "session:end")],
+      ]),
+    });
     return;
   }
 
