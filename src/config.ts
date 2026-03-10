@@ -48,7 +48,7 @@ export const CONFIG = {
       {
         path: "./assets/banner_ref_1.jpg",
         role: "style" as const,
-        promptHint: "Color palette, font weight, and background style reference only. Do not reproduce any text, layout, or people from this image.",
+        promptHint: "Use ONLY as reference for: color palette (dark green, neon green, yellow), visual style (bold grotesk typography, high contrast), and layout composition (text placement, element spacing, background treatment). Do NOT copy any text, specific words, people, or exact content from this image.",
       },
       {
         path: null as string | null,
