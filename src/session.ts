@@ -64,6 +64,9 @@ export type DevConfigAwait = {
   type: "text";
   target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b0" | "mod_add_VISUAL_HOOK" etc.
   userId: number;
+} | {
+  type: "admin_add";
+  userId: number;
 } | null;
 
 export type GlobalState = {

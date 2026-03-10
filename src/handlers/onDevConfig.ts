@@ -791,18 +791,6 @@ export async function handleConfigInput(
       const idx = parseInt(target.slice(5), 10);
       setBannerAnnotation(idx, text);
       await tg.sendText(uid, `✅ Banner ${idx + 1} annotation updated.`);
-    } else if (target === "admin_add") {
-      const id = parseInt(text, 10);
-      if (isNaN(id) || id <= 0) {
-        await tg.sendText(uid, "❌ Invalid user ID. Must be a positive number.");
-      } else {
-        const added = addAdminUserId(id);
-        if (added) {
-          await tg.sendText(uid, `✅ Added admin: ${id}`);
-        } else {
-          await tg.sendText(uid, `⚠️ ${id} is already an admin.`);
-        }
-      }
     } else if (target.startsWith("mod_add_")) {
       const category = target.slice(8);
       const option = text.replace(/\s+/g, "_").toLowerCase();
@@ -814,6 +802,95 @@ export async function handleConfigInput(
       }
     } else {
       await tg.sendText(uid, "❌ Unknown target. Cancelled.");
+    }
+    return true;
+  }
+
+  if (await_.type === "admin_add") {
+    try {
+      let resolvedId: number | null = null;
+      let resolvedName: string | null = null;
+
+      // 1. Shared contact
+      const media = msg.media;
+      if (media && media.type === "contact") {
+        const contactUserId = media.userId;
+        if (!contactUserId || contactUserId === 0) {
+          await tg.sendText(uid, "❌ This contact has no Telegram account.");
+          return true;
+        }
+        resolvedId = contactUserId;
+        resolvedName = [media.firstName, media.lastName].filter(Boolean).join(" ");
+      }
+
+      // 2. Forwarded message
+      if (!resolvedId && msg.forward) {
+        const fwdSender = msg.forward.sender;
+        if (!fwdSender || fwdSender.type === "anonymous") {
+          await tg.sendText(uid, "❌ Cannot identify the sender — they may have private forwards enabled.");
+          return true;
+        }
+        if (fwdSender.type === "chat") {
+          await tg.sendText(uid, "❌ That's a channel/group, not a user.");
+          return true;
+        }
+        // fwdSender is a User
+        if (fwdSender.isBot) {
+          await tg.sendText(uid, "❌ That's a bot, not a user.");
+          return true;
+        }
+        resolvedId = fwdSender.id;
+        resolvedName = fwdSender.displayName;
+      }
+
+      // 3. @username or plain text username
+      if (!resolvedId) {
+        const text = msg.text?.trim();
+        if (!text) {
+          await tg.sendText(uid, "❌ Send a @username, forwarded message, or shared contact.");
+          return true;
+        }
+
+        const username = text.startsWith("@") ? text.slice(1) : text;
+        if (!/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(username)) {
+          await tg.sendText(uid, "❌ Invalid username format.");
+          return true;
+        }
+
+        try {
+          const users = await tg.getUsers(username);
+          const user = Array.isArray(users) ? users[0] : users;
+          if (!user) {
+            await tg.sendText(uid, `❌ User @${username} not found.`);
+            return true;
+          }
+          if (user.isBot) {
+            await tg.sendText(uid, `❌ @${username} is a bot, not a user.`);
+            return true;
+          }
+          resolvedId = user.id;
+          resolvedName = user.displayName;
+        } catch {
+          await tg.sendText(uid, `❌ Could not resolve @${username}.`);
+          return true;
+        }
+      }
+
+      if (!resolvedId) {
+        await tg.sendText(uid, "❌ Could not identify a user. Cancelled.");
+        return true;
+      }
+
+      const added = addAdminUserId(resolvedId);
+      const label = resolvedName ? `${resolvedName} (${resolvedId})` : String(resolvedId);
+      if (added) {
+        await tg.sendText(uid, `✅ Added admin: ${label}`);
+      } else {
+        await tg.sendText(uid, `⚠️ ${label} is already an admin.`);
+      }
+    } catch (err) {
+      await devAlert("admin_add", err);
+      await tg.sendText(uid, "❌ Failed to add admin.");
     }
     return true;
   }
