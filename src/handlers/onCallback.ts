@@ -7,7 +7,10 @@ import { devAlert } from "../devAlert.js";
 import { analyzeMessage, reanalyzeForStage } from "../flow/analyze.js";
 import { assemblePrompt, generateImage } from "../flow/generate.js";
 import { saveFeedback } from "../flow/feedback.js";
-import { hintSelectorText, hintSelectorKeyboard } from "../ui/hintSelector.js";
+import {
+  stageStepText, stageStepKeyboard,
+  styleStepText, styleStepKeyboard,
+} from "../ui/hintSelector.js";
 import { analysisCardText, analysisCardKeyboard, stagePickerKeyboard } from "../ui/analysisCard.js";
 import { moduleEditorText, moduleEditorKeyboard, moduleCategoryKeyboard } from "../ui/moduleEditor.js";
 
@@ -83,10 +86,30 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
   }
 }
 
-// ── Hint selection ───────────────────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Deactivate an interactive message: replace text with an action note and
+ * strip the inline keyboard. Works for text messages (replaces text) and
+ * media messages (updates caption). Falls back to just removing the keyboard
+ * if the text edit fails.
+ */
+async function deactivateMessage(cb: CallbackQueryContext, note: string): Promise<void> {
+  try {
+    await cb.editMessage({ text: note });
+  } catch {
+    try {
+      await cb.editMessage({ replyMarkup: BotKeyboard.inline([]) });
+    } catch {
+      // Ignore — message may have been deleted
+    }
+  }
+}
+
+// ── Hint selection (two-step) ────────────────────────────────────────────
 
 async function handleHintStage(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (session.phase !== "HINT_STAGE") {
     await cb.answer({});
     return;
   }
@@ -100,13 +123,13 @@ async function handleHintStage(cb: CallbackQueryContext, session: Session, value
 
   await cb.answer({});
   await cb.editMessage({
-    text: hintSelectorText(),
-    replyMarkup: hintSelectorKeyboard(session),
+    text: stageStepText(session),
+    replyMarkup: stageStepKeyboard(session),
   });
 }
 
 async function handleHintStyle(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (session.phase !== "HINT_STYLE") {
     await cb.answer({});
     return;
   }
@@ -119,23 +142,57 @@ async function handleHintStyle(cb: CallbackQueryContext, session: Session, value
 
   await cb.answer({});
   await cb.editMessage({
-    text: hintSelectorText(),
-    replyMarkup: hintSelectorKeyboard(session),
+    text: styleStepText(session),
+    replyMarkup: styleStepKeyboard(session),
   });
 }
 
 async function handleHints(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_SELECTION") {
+  if (value === "next") {
+    // Stage step → Style step
+    if (session.phase !== "HINT_STAGE") {
+      await cb.answer({});
+      return;
+    }
+    session.phase = "HINT_STYLE";
     await cb.answer({});
-    return;
+    await cb.editMessage({
+      text: styleStepText(session),
+      replyMarkup: styleStepKeyboard(session),
+    });
+  } else if (value === "skip_stage") {
+    // Skip stage, go to style step
+    if (session.phase !== "HINT_STAGE") {
+      await cb.answer({});
+      return;
+    }
+    delete session.selectedHints.stage;
+    session.phase = "HINT_STYLE";
+    await cb.answer({});
+    await cb.editMessage({
+      text: styleStepText(session),
+      replyMarkup: styleStepKeyboard(session),
+    });
+  } else if (value === "skip_style") {
+    // Skip style, run analysis
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    delete session.selectedHints.style;
+    await cb.answer({});
+    await runAnalysis(tg, cb, session);
+  } else if (value === "confirm") {
+    // Style step confirmed, run analysis
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    await cb.answer({});
+    await runAnalysis(tg, cb, session);
+  } else {
+    await cb.answer({});
   }
-
-  if (value === "skip") {
-    session.selectedHints = {};
-  }
-
-  await cb.answer({});
-  await runAnalysis(tg, cb, session);
 }
 
 // ── Analysis ─────────────────────────────────────────────────────────────
@@ -163,10 +220,10 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
     });
   } catch (err) {
     await devAlert("onCallback / runAnalysis", err, { userId: session.userId });
-    session.phase = "HINT_SELECTION";
+    session.phase = "HINT_STYLE";
     await cb.editMessage({
       text: CONFIG.ui.retryError,
-      replyMarkup: hintSelectorKeyboard(session),
+      replyMarkup: styleStepKeyboard(session),
     });
   }
 }
@@ -174,16 +231,18 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
 // ── Generation ───────────────────────────────────────────────────────────
 
 async function handleGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "confirm" || value === "same") {
-    await doGenerate(tg, cb, session, false);
+  if (value === "confirm") {
+    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
+  } else if (value === "same") {
+    await doGenerate(tg, cb, session, false, "🔁 Повторна генерація");
   } else if (value === "variation") {
-    await doGenerate(tg, cb, session, true);
+    await doGenerate(tg, cb, session, true, "🎲 Варіація");
   } else {
     await cb.answer({});
   }
 }
 
-async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean): Promise<void> {
+async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean, sourceNote: string): Promise<void> {
   if (!session.modules || !session.sonnetOutput) {
     await cb.answer({ text: "Немає даних для генерації" });
     return;
@@ -191,6 +250,7 @@ async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session:
 
   session.phase = "GENERATING";
   await cb.answer({});
+  await deactivateMessage(cb, sourceNote);
   await tg.sendText(session.userId, CONFIG.ui.generating);
 
   try {
@@ -333,7 +393,7 @@ async function handleModules(tg: TelegramClient, cb: CallbackQueryContext, sessi
       replyMarkup: moduleEditorKeyboard(session),
     });
   } else if (value === "done") {
-    await doGenerate(tg, cb, session, false);
+    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
   } else if (value === "back") {
     session.phase = "ANALYSIS_READY";
     await cb.answer({});
@@ -391,6 +451,7 @@ async function handleFeedback(tg: TelegramClient, cb: CallbackQueryContext, sess
   if (value === "start") {
     session.phase = "AWAITING_FEEDBACK_RATING";
     await cb.answer({});
+    await deactivateMessage(cb, "⭐ Оцінка");
     await tg.sendText(session.userId, "Як вам результат?", {
       replyMarkup: BotKeyboard.inline([
         [1, 2, 3, 4, 5].map((n) =>
@@ -435,6 +496,7 @@ async function handleSession(tg: TelegramClient, cb: CallbackQueryContext, sessi
   if (value === "end") {
     globalState.activeSession = null;
     await cb.answer({});
+    await deactivateMessage(cb, "❌ Сесію завершено");
     await tg.sendText(session.userId, CONFIG.ui.sessionEnded);
   } else {
     await cb.answer({});
@@ -467,9 +529,9 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
           return;
         }
         newSession.inputText = pendingText;
-        newSession.phase = "HINT_SELECTION";
-        await tg.sendText(userId, hintSelectorText(), {
-          replyMarkup: hintSelectorKeyboard(newSession),
+        newSession.phase = "HINT_STAGE";
+        await tg.sendText(userId, stageStepText(newSession), {
+          replyMarkup: stageStepKeyboard(newSession),
         });
       } catch (err) {
         await devAlert("onCallback / interrupt:cancel / gate", err, { userId });

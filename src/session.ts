@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 export type SessionPhase =
   | "WAITING_FOR_MESSAGE"
-  | "HINT_SELECTION"
+  | "HINT_STAGE"
+  | "HINT_STYLE"
   | "ANALYZING"
   | "ANALYSIS_READY"
   | "GENERATING"
