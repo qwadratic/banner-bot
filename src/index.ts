@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { TelegramClient, BotKeyboard } from "@mtcute/node";
-import { Dispatcher } from "@mtcute/dispatcher";
+import { Dispatcher, filters } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerDevPanel } from "./handlers/onDevPanel.js";
 
@@ -35,6 +35,20 @@ process.on("unhandledRejection", (reason) => {
   // Do not exit — keep bot running
 });
 
+// Track greeted users (first /start only)
+const greetedUsers = new Set<number>();
+
+// Handle /start command — greet only on first use
+dp.onNewMessage(filters.command("start"), async (msg) => {
+  const userId = msg.sender.id;
+  if (greetedUsers.has(userId)) return;
+  greetedUsers.add(userId);
+
+  await msg.answerText(
+    "👋 Привет! Я бот для создания баннеров.\n\nОтправь мне описание или изображение, и я помогу создать баннер.",
+  );
+});
+
 // Register dev panel handler
 registerDevPanel(tg, dp, DEV_TG_ID);
 
@@ -44,6 +58,11 @@ async function main() {
   console.log(`Bot started as @${self.username ?? self.displayName}`);
   console.log(`Dev TG ID: ${DEV_TG_ID}`);
   console.log(`PID: ${process.pid}`);
+
+  // Set bot commands visible in menu
+  await tg.call({ _: "bots.setBotCommands", scope: { _: "botCommandScopeDefault" }, lang_code: "", commands: [
+    { _: "botCommand", command: "start", description: "Начать" },
+  ] });
 
   await tg.sendText(DEV_TG_ID, `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`, {
     replyMarkup: BotKeyboard.inline([
