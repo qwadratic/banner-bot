@@ -51,9 +51,6 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
       case "stage":
         await handleStage(tg, cb, session, value);
         break;
-      case "analysis":
-        await handleAnalysis(cb, session, value);
-        break;
       case "prompt":
         await handlePrompt(tg, cb, session);
         break;
@@ -217,7 +214,7 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
     session.modules = result.modules;
     session.sonnetOutput = result;
     session.userOverrides = {};
-    session.showPrompt = false;
+
     session.generatedPrompt = assemblePrompt(result.modules, {}, result);
     session.phase = "ANALYSIS_READY";
 
@@ -320,7 +317,7 @@ async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session
     session.modelAgreesWithHint = true;
     session.disagreementReason = null;
     session.selectedHints.stage = session.detectedStage ?? undefined;
-    session.showPrompt = false;
+
     session.phase = "ANALYSIS_READY";
     // Re-assemble prompt with accepted stage (modules unchanged)
     if (session.modules && session.sonnetOutput) {
@@ -361,7 +358,7 @@ async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, 
     session.modules = result.modules;
     session.sonnetOutput = result;
     session.userOverrides = {};
-    session.showPrompt = false;
+
     session.generatedPrompt = assemblePrompt(result.modules, {}, result);
     session.phase = "ANALYSIS_READY";
 
@@ -376,21 +373,6 @@ async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, 
       text: CONFIG.ui.retryError,
       replyMarkup: analysisCardKeyboard(session),
     });
-  }
-}
-
-// ── Analysis card actions ────────────────────────────────────────────────
-
-async function handleAnalysis(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "toggle_prompt") {
-    session.showPrompt = !session.showPrompt;
-    await cb.answer({});
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  } else {
-    await cb.answer({});
   }
 }
 

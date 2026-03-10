@@ -49,7 +49,6 @@ export type Session = {
   modules: ModuleSet | null;
   userOverrides: Partial<ModuleSet>;
   sonnetOutput: SonnetOutput | null;
-  showPrompt: boolean;
   generatedPrompt: string | null;
   generationCount: number;
   pendingRating: number | null;
@@ -83,7 +82,6 @@ export function createSession(userId: number): Session {
     modules: null,
     userOverrides: {},
     sonnetOutput: null,
-    showPrompt: false,
     generatedPrompt: null,
     generationCount: 0,
     pendingRating: null,

@@ -39,20 +39,10 @@ export function analysisCardText(session: Session): string {
     }
   }
 
-  // Prompt (toggled)
-  if (session.showPrompt && session.generatedPrompt) {
-    const prompt = session.generatedPrompt.length > 3000
-      ? session.generatedPrompt.slice(0, 2997) + "..."
-      : session.generatedPrompt;
-    text += `\n\n📋 Промпт:\n${prompt}`;
-  }
-
   return text;
 }
 
 export function analysisCardKeyboard(session: Session): ReplyMarkup {
-  const promptLabel = session.showPrompt ? "📋 Сховати промпт" : "📋 Показати промпт";
-
   // Disagreement case: model suggests different stage than user hint
   if (
     session.modelAgreesWithHint === false &&
@@ -62,7 +52,6 @@ export function analysisCardKeyboard(session: Session): ReplyMarkup {
     return BotKeyboard.inline([
       [BotKeyboard.callback(`✅ Погодитись з AI`, "stage:use_model")],
       [BotKeyboard.callback(`🔁 Залишити мій вибір`, "stage:keep_user")],
-      [BotKeyboard.callback(promptLabel, "analysis:toggle_prompt")],
       [BotKeyboard.callback("❌ Скасувати", "session:end")],
     ]);
   }
@@ -70,7 +59,6 @@ export function analysisCardKeyboard(session: Session): ReplyMarkup {
   // Normal case: agrees or no hint
   return BotKeyboard.inline([
     [BotKeyboard.callback("✅ Генерувати банер", "generate:confirm")],
-    [BotKeyboard.callback(promptLabel, "analysis:toggle_prompt")],
     [BotKeyboard.callback("❌ Скасувати", "session:end")],
   ]);
 }
