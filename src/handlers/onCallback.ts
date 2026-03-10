@@ -467,7 +467,7 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
 
     // Process the pending text as a new message
     if (pendingText) {
-      const { classifyMessage } = await import("../flow/gate.js");
+      const { classifyMessage, GateTimeoutError } = await import("../flow/gate.js");
       try {
         const result = await classifyMessage(pendingText);
         if (!result.isFunnelMessage) {
@@ -481,7 +481,11 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
         });
       } catch (err) {
         await devAlert("onCallback / interrupt:cancel / gate", err, { userId });
-        await tg.sendText(userId, CONFIG.ui.retryError);
+        if (err instanceof GateTimeoutError) {
+          await tg.sendText(userId, CONFIG.ui.timeoutError);
+        } else {
+          await tg.sendText(userId, CONFIG.ui.retryError);
+        }
       }
     }
   } else if (value === "continue") {

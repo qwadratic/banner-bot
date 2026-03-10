@@ -1,64 +1,209 @@
 import type { SonnetOutput } from "../session.js";
+import { CONFIG, resolvedModels } from "../config.js";
+import { devAlert } from "../devAlert.js";
 
-// Phase 1: Mock Sonnet analysis — returns hardcoded FOMO response after 2s delay.
-// If user provided a stage hint that differs from the mock's "FOMO", returns
-// modelAgreesWithHint: false so the conflict-resolution flow can be tested.
-export async function analyzeMessage(
-  _inputText: string,
-  hints: { stage?: string; style?: string },
-): Promise<SonnetOutput> {
-  await new Promise((r) => setTimeout(r, 2_000));
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
-  const mockStage = "FOMO";
-  const hintDisagrees = hints.stage != null && hints.stage !== mockStage;
+const VALID_STAGES = new Set([
+  "Attention", "Identification", "Problem", "Insight",
+  "Authority", "Micro-value", "Possibility", "FOMO",
+]);
+const VALID_CONFIDENCES = new Set(["high", "medium", "low"]);
+const MODULE_KEYS = ["VISUAL_HOOK", "VISUAL_DRAMA", "COMPOSITION", "MAIN_ELEMENT", "SCROLL_EFFECT"] as const;
 
-  return {
-    detectedStage: mockStage,
-    confidence: "high",
-    modelAgreesWithHint: hints.stage == null ? null : !hintDisagrees,
-    disagreementReason: hintDisagrees
-      ? `Mock: the text shows urgency patterns typical for ${mockStage}, not ${hints.stage}.`
-      : null,
-    modules: {
-      VISUAL_HOOK: "contrast",
-      VISUAL_DRAMA: "urgency",
-      COMPOSITION: "centered_headline",
-      MAIN_ELEMENT: "countdown_timer",
-      SCROLL_EFFECT: "strong_contrast",
-    },
-    scene: "A dramatic countdown clock overlaid on a dark green medical background with bold yellow accent panels. A foot diagram fades into the background with urgent visual markers.",
-    headline: "Останній день реєстрації!",
-    secondary: "Приєднуйтесь до курсу ортопедії сьогодні",
-  };
+function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
+  if (typeof obj !== "object" || obj === null) return false;
+  const o = obj as Record<string, unknown>;
+  if (!VALID_STAGES.has(o.detectedStage as string)) return false;
+  if (!VALID_CONFIDENCES.has(o.confidence as string)) return false;
+  if (typeof o.scene !== "string" || typeof o.headline !== "string" || typeof o.secondary !== "string") return false;
+  if (typeof o.modules !== "object" || o.modules === null) return false;
+  const mods = o.modules as Record<string, unknown>;
+  for (const key of MODULE_KEYS) {
+    if (typeof mods[key] !== "string") return false;
+  }
+  return true;
 }
 
-// Re-analyze with a forced stage (for "keep user stage" or "change stage")
-export async function reanalyzeForStage(
-  _inputText: string,
-  stage: string,
-  _hints: { style?: string },
+function buildUserMessage(inputText: string, hints: { stage?: string; style?: string }): string {
+  let hintsBlock: string;
+  if (hints.stage && hints.style) {
+    hintsBlock = `User stage hint: ${hints.stage}\nUser style hint: ${hints.style}`;
+  } else if (hints.stage) {
+    hintsBlock = `User stage hint: ${hints.stage}`;
+  } else if (hints.style) {
+    hintsBlock = `User style hint: ${hints.style}`;
+  } else {
+    hintsBlock = "No hints provided. Determine stage from the message alone.";
+  }
+
+  return `Analyze the following funnel message and return a JSON object matching this schema exactly:
+
+${CONFIG.sonnetOutputSchema}
+
+Funnel message:
+"""
+${inputText}
+"""
+
+${hintsBlock}
+
+Stage-to-module reference table (use as starting point, deviate when justified):
+
+| Stage          | VISUAL_HOOK        | VISUAL_DRAMA   | COMPOSITION             | MAIN_ELEMENT       | SCROLL_EFFECT   |
+|----------------|--------------------|----------------|-------------------------|--------------------|-----------------|
+| Attention      | contrast           | diagnostic     | left_text_right_visual  | foot_diagram       | graphic_arrows  |
+| Identification | quote_visual       | discovery      | centered_headline       | text_quote         | strong_contrast |
+| Problem        | professional_chaos | diagnostic     | split_screen            | symptom_labels     | visual_paradox  |
+| Insight        | medical_markup     | explanation    | left_text_right_visual  | foot_diagram       | dramatic_zoom   |
+| Authority      | split_reality      | explanation    | split_screen            | orthotic_insert    | strong_contrast |
+| Micro-value    | magnified_detail   | discovery      | oversized_object        | macro_foot_texture | dramatic_zoom   |
+| Possibility    | symbolic_object    | transformation | centered_headline       | orthotic_insert    | minimalism      |
+| FOMO           | contrast           | urgency        | centered_headline       | countdown_timer    | strong_contrast |
+
+Available module values per category:
+
+VISUAL_HOOK: contrast, magnified_detail, medical_markup, split_reality, symbolic_object, quote_visual, professional_chaos
+
+VISUAL_DRAMA: diagnostic, discovery, explanation, transformation, urgency
+
+COMPOSITION: left_text_right_visual, centered_headline, split_screen, oversized_object, minimal_focus
+
+MAIN_ELEMENT: foot_diagram, orthotic_insert, macro_foot_texture, symptom_labels, countdown_timer, text_quote
+
+SCROLL_EFFECT: oversized_object, visual_paradox, strong_contrast, graphic_arrows, dramatic_zoom, minimalism
+
+Field instructions:
+- "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
+- "headline": Ukrainian. ALL CAPS. Max 6 words. Extracted or rewritten from the funnel message. Must be the strongest possible hook for this stage.
+- "secondary": Ukrainian. Max 10 words. Supports the headline. Calm, direct.
+- "modelAgreesWithHint": true if you agree with the stage hint, false if you disagree, null if no hint was given.
+- "disagreementReason": one sentence in English explaining why you chose a different stage. null if no disagreement.`;
+}
+
+async function callSonnet(
+  systemPrompt: string,
+  userMessage: string,
+  context: string,
 ): Promise<SonnetOutput> {
-  await new Promise((r) => setTimeout(r, 2_000));
+  const apiKey = process.env.OPENROUTER_API_KEY!;
+  const { attempts, delayMs } = CONFIG.retry.analyze;
 
-  // Mock: return the same structure but with the requested stage
-  // In Phase 2 this will actually call Sonnet with the forced stage
-  const { CONFIG } = await import("../config.js");
-  const defaults = CONFIG.stageModuleDefaults[stage] ?? CONFIG.stageModuleDefaults["FOMO"];
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), CONFIG.timeouts.analyze);
 
-  return {
-    detectedStage: stage,
-    confidence: "high",
-    modelAgreesWithHint: true,
-    disagreementReason: null,
-    modules: {
-      VISUAL_HOOK: defaults.VISUAL_HOOK,
-      VISUAL_DRAMA: defaults.VISUAL_DRAMA,
-      COMPOSITION: defaults.COMPOSITION,
-      MAIN_ELEMENT: defaults.MAIN_ELEMENT,
-      SCROLL_EFFECT: defaults.SCROLL_EFFECT,
-    },
-    scene: "A dramatic scene matching the selected stage with dark green medical background and bold typography.",
-    headline: "Останній день реєстрації!",
-    secondary: "Приєднуйтесь до курсу ортопедії сьогодні",
-  };
+      const resp = await fetch(OPENROUTER_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: resolvedModels.analyze,
+          max_tokens: 4000,
+          thinking: { type: "enabled", budget_tokens: 8000 },
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userMessage },
+          ],
+        }),
+        signal: ctrl.signal,
+      });
+      clearTimeout(timer);
+
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        throw new Error(`HTTP ${resp.status}: ${body.slice(0, 500)}`);
+      }
+
+      const data = (await resp.json()) as {
+        choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }>;
+        error?: { message?: string };
+      };
+
+      if (data.error) {
+        throw new Error(`API error: ${data.error.message ?? JSON.stringify(data.error)}`);
+      }
+
+      // Extract text content — may be a string or an array with thinking + text blocks
+      let rawText = "";
+      const content = data.choices?.[0]?.message?.content;
+      if (typeof content === "string") {
+        rawText = content;
+      } else if (Array.isArray(content)) {
+        const textBlock = content.find((b) => b.type === "text");
+        rawText = textBlock?.text ?? "";
+      }
+
+      // Strip markdown fences
+      const cleaned = rawText.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        if (attempt < attempts) {
+          await devAlert(`${context} / JSON parse failure (attempt ${attempt})`, new Error(`Raw: ${rawText.slice(0, 500)}`));
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        await devAlert(`${context} / JSON parse failure after retries`, new Error(`Raw: ${rawText.slice(0, 500)}`));
+        throw new Error("JSON parse failure after retries");
+      }
+
+      if (!isValidSonnetOutput(parsed)) {
+        if (attempt < attempts) {
+          await devAlert(`${context} / invalid fields (attempt ${attempt})`, new Error(`Parsed: ${JSON.stringify(parsed).slice(0, 500)}`));
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        await devAlert(`${context} / invalid fields after retries`, new Error(`Parsed: ${JSON.stringify(parsed).slice(0, 500)}`));
+        throw new Error("Invalid Sonnet output after retries");
+      }
+
+      return parsed;
+    } catch (err) {
+      const isTimeout = err instanceof Error && err.name === "AbortError";
+
+      if (isTimeout) {
+        await devAlert(`${context} / timeout`, err);
+        throw err;
+      }
+
+      // If it's our own validation error, rethrow after last attempt
+      if (err instanceof Error && (err.message.includes("after retries") || err.message.includes("parse failure"))) {
+        throw err;
+      }
+
+      if (attempt < attempts) {
+        await devAlert(`${context} / API error (attempt ${attempt})`, err);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+
+      await devAlert(`${context} / API error after retries`, err);
+      throw err;
+    }
+  }
+
+  throw new Error("Exhausted retries");
+}
+
+export async function analyzeMessage(
+  inputText: string,
+  hints: { stage?: string; style?: string },
+): Promise<SonnetOutput> {
+  const userMessage = buildUserMessage(inputText, hints);
+  return callSonnet(CONFIG.sonnetSystemPrompt, userMessage, "analyze");
+}
+
+export async function reanalyzeForStage(
+  inputText: string,
+  stage: string,
+  hints: { style?: string },
+): Promise<SonnetOutput> {
+  const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
+  return callSonnet(CONFIG.sonnetSystemPrompt, userMessage, "reanalyze");
 }
