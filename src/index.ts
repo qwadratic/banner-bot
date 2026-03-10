@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { TelegramClient } from "@mtcute/node";
+import { TelegramClient, BotKeyboard } from "@mtcute/node";
 import { Dispatcher } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerDevPanel } from "./handlers/onDevPanel.js";
@@ -45,7 +45,11 @@ async function main() {
   console.log(`Dev TG ID: ${DEV_TG_ID}`);
   console.log(`PID: ${process.pid}`);
 
-  await tg.sendText(DEV_TG_ID, `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`);
+  await tg.sendText(DEV_TG_ID, `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`, {
+    replyMarkup: BotKeyboard.inline([
+      [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
+    ]),
+  });
 }
 
 main().catch((err) => {

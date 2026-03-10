@@ -41,10 +41,7 @@ function devPanelKeyboard() {
       BotKeyboard.callback("🔄 Restart", "dev:restart"),
       BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
     ],
-    [
-      BotKeyboard.callback("📋 Logs", "dev:logs"),
-      BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz"),
-    ],
+
   ];
 
   if (!session) {
@@ -362,15 +359,6 @@ export function registerDevPanel(
   dp: Dispatcher,
   devTgId: number,
 ): void {
-  // Handle /shelley command from dev user
-  dp.onNewMessage(filters.and(filters.userId(devTgId), filters.command("shelley")), async (msg) => {
-    await msg.answerText("🖥 Shelley VM", {
-      replyMarkup: BotKeyboard.inline([
-        [BotKeyboard.url("Open Shelley", "https://banner-bot.shelley.exe.xyz")],
-      ]),
-    });
-  });
-
   // Handle all messages from dev user
   dp.onNewMessage(filters.userId(devTgId), async (msg) => {
     // If dev is in user mode with an active session, let message through
@@ -463,18 +451,6 @@ export function registerDevPanel(
 
           await tg.sendText(devTgId, "🔄 Restarting...");
           setTimeout(() => process.exit(0), 500);
-          break;
-        }
-
-        case "logs": {
-          await cb.answer({ text: "Fetching logs..." });
-          const logsResult = await execShell("journalctl -u banner-bot --no-pager -n 50");
-          let logsText = logsResult.stdout || logsResult.stderr || "No logs found";
-          // Trim to fit Telegram message limit
-          if (logsText.length > 3900) {
-            logsText = "..." + logsText.slice(-3900);
-          }
-          await tg.sendText(devTgId, `📋 Logs (last 50 lines)\n\n${logsText}`);
           break;
         }
 
