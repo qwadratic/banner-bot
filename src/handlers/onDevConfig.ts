@@ -39,43 +39,38 @@ const MOD_TO_ABBR: Record<string, string> = Object.fromEntries(
   Object.entries(MOD_ABBR).map(([k, v]) => [v, k]),
 );
 
-// ── Back keyboard to config main ─────────────────────────────────────────
-
-function backToConfig() {
-  return BotKeyboard.inline([[BotKeyboard.callback("← Back", "cfg:main")]]);
-}
-
 // ── Main router ──────────────────────────────────────────────────────────
 
-export async function handleDevConfigCallback(
+export async function handleConfigCallback(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
 ): Promise<void> {
   const data = cb.dataStr;
   if (!data?.startsWith("cfg:")) return;
 
+  const userId = cb.user.id;
   const parts = data.slice(4).split(":");
 
   try {
     switch (parts[0]) {
       case "main": return await showConfigMain(cb);
+      case "close": return await closeConfig(cb);
       case "photos": return await showPhotos(cb);
-      case "ph": return await handlePhoto(tg, cb, devTgId, parts.slice(1));
-      case "ann": return await handleAnnotation(tg, cb, devTgId, parts.slice(1));
-      case "pr": return await handlePrompt(tg, cb, devTgId, parts.slice(1));
-      case "tpl": return await handleTemplate(tg, cb, devTgId, parts.slice(1));
+      case "ph": return await handlePhoto(tg, cb, userId, parts.slice(1));
+      case "ann": return await handleAnnotation(tg, cb, userId, parts.slice(1));
+      case "pr": return await handlePrompt(tg, cb, userId, parts.slice(1));
+      case "tpl": return await handleTemplate(tg, cb, userId, parts.slice(1));
       case "stg": return await handleStageModules(cb, parts.slice(1));
       case "sm": return await handleStageModuleSelect(cb, parts.slice(1));
       case "sv": return await handleStageModuleSet(cb, parts.slice(1));
       case "mo": return await handleModuleOpts(cb, parts.slice(1));
       case "mr": return await handleModuleRemove(cb, parts.slice(1));
-      case "ma": return await handleModuleAdd(tg, cb, devTgId, parts.slice(1));
+      case "ma": return await handleModuleAdd(tg, cb, userId, parts.slice(1));
       case "rst": return await handleReset(cb, parts.slice(1));
       default: await cb.answer({ text: "Unknown config action" });
     }
   } catch (err) {
-    await devAlert("onDevConfig", err, { data });
+    await devAlert("onDevConfig", err, { data, userId });
     try { await cb.answer({ text: "Error — check alerts" }); } catch { /* ignore */ }
   }
 }
@@ -107,9 +102,14 @@ async function showConfigMain(cb: CallbackQueryContext): Promise<void> {
         BotKeyboard.callback("📊 Stage modules", "cfg:stg"),
         BotKeyboard.callback("🧩 Module opts", "cfg:mo"),
       ],
-      [BotKeyboard.callback("← Back", "dev:back")],
+      [BotKeyboard.callback("✕ Close", "cfg:close")],
     ]),
   });
+}
+
+async function closeConfig(cb: CallbackQueryContext): Promise<void> {
+  await cb.answer({});
+  await cb.editMessage({ text: "⚙️ Config closed." });
 }
 
 // ── Photos ───────────────────────────────────────────────────────────────
@@ -144,7 +144,7 @@ async function showPhotos(cb: CallbackQueryContext): Promise<void> {
 async function handlePhoto(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
+  userId: number,
   parts: string[],
 ): Promise<void> {
   const target = parts[0]; // "doc" | "b0" | "b1"
@@ -205,26 +205,26 @@ async function handlePhoto(
       filePath = getBannerStyles()[idx]?.path ?? null;
     }
     if (!filePath) {
-      await tg.sendText(devTgId, "No photo set.");
+      await tg.sendText(userId, "No photo set.");
       return;
     }
     try {
       const resolved = path.resolve(PROJECT_ROOT, filePath);
       const buf = fs.readFileSync(resolved);
       await tg.sendMedia(
-        devTgId,
+        userId,
         InputMedia.photo(new Uint8Array(buf), { fileName: path.basename(filePath) }),
       );
-    } catch (err) {
-      await tg.sendText(devTgId, `Failed to load: ${filePath}`);
+    } catch {
+      await tg.sendText(userId, `Failed to load: ${filePath}`);
     }
     return;
   }
 
   if (action === "rep") {
     await cb.answer({});
-    globalState.devConfigAwait = { type: "photo", target };
-    await tg.sendText(devTgId, "📷 Send a new photo.");
+    globalState.devConfigAwait = { type: "photo", target, userId };
+    await tg.sendText(userId, "📷 Send a new photo.");
     return;
   }
 
@@ -251,7 +251,7 @@ async function handlePhoto(
 async function handleAnnotation(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
+  userId: number,
   parts: string[],
 ): Promise<void> {
   const target = parts[0]; // undefined | "doc" | "b0" | "b1"
@@ -283,8 +283,8 @@ async function handleAnnotation(
 
   if (action === "edit") {
     await cb.answer({});
-    globalState.devConfigAwait = { type: "text", target: `ann_${target}` };
-    await tg.sendText(devTgId, "📝 Send the new annotation text.");
+    globalState.devConfigAwait = { type: "text", target: `ann_${target}`, userId };
+    await tg.sendText(userId, "📝 Send the new annotation text.");
     return;
   }
 
@@ -315,7 +315,7 @@ async function handleAnnotation(
 async function handlePrompt(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
+  userId: number,
   parts: string[],
 ): Promise<void> {
   const target = parts[0]; // undefined | "gate" | "son"
@@ -342,8 +342,8 @@ async function handlePrompt(
   if (action === "edit") {
     await cb.answer({});
     const key = target === "gate" ? "gate_prompt" : "sonnet_prompt";
-    globalState.devConfigAwait = { type: "text", target: key };
-    await tg.sendText(devTgId, "🤖 Send the new system prompt text.");
+    globalState.devConfigAwait = { type: "text", target: key, userId };
+    await tg.sendText(userId, "🤖 Send the new system prompt text.");
     return;
   }
 
@@ -366,10 +366,9 @@ async function handlePrompt(
   if (action === "view") {
     await cb.answer({});
     const text = target === "gate" ? getHaikuPrompt() : getSonnetPrompt();
-    // Send as new message to avoid caption length limits
     const chunks = splitMessage(text, 4000);
     for (const chunk of chunks) {
-      await tg.sendText(devTgId, chunk);
+      await tg.sendText(userId, chunk);
     }
     return;
   }
@@ -404,15 +403,15 @@ async function handlePrompt(
 async function handleTemplate(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
+  userId: number,
   parts: string[],
 ): Promise<void> {
   const action = parts[0]; // undefined | "edit" | "rst" | "view"
 
   if (action === "edit") {
     await cb.answer({});
-    globalState.devConfigAwait = { type: "text", target: "image_template" };
-    await tg.sendText(devTgId, "🎨 Send the new image prompt template.\n\nPlaceholders: {modules}, {scene}, {headline}, {secondary}");
+    globalState.devConfigAwait = { type: "text", target: "image_template", userId };
+    await tg.sendText(userId, "🎨 Send the new image prompt template.\n\nPlaceholders: {modules}, {scene}, {headline}, {secondary}");
     return;
   }
 
@@ -433,7 +432,7 @@ async function handleTemplate(
     const text = getImageTemplate();
     const chunks = splitMessage(text, 4000);
     for (const chunk of chunks) {
-      await tg.sendText(devTgId, chunk);
+      await tg.sendText(userId, chunk);
     }
     return;
   }
@@ -508,7 +507,7 @@ async function handleStageModules(
     text += `${mod} = ${val}\n`;
   }
 
-  const rows = Object.entries(mods).map(([mod, val]) => {
+  const rows = Object.entries(mods).map(([mod]) => {
     const modAbbr = MOD_TO_ABBR[mod] ?? mod.slice(0, 2);
     return [BotKeyboard.callback(`⚙️ ${mod}`, `cfg:sm:${stageAbbr}:${modAbbr}`)];
   });
@@ -536,7 +535,7 @@ async function handleStageModuleSelect(
   const current = defaults[stage]?.[mod] ?? "";
   const options = getModuleOptions()[mod] ?? [];
 
-  let text = `📊 ${stage} / ${mod}\n\nCurrent: ${current}\n\nPick a new value:`;
+  const text = `📊 ${stage} / ${mod}\n\nCurrent: ${current}\n\nPick a new value:`;
 
   const rows: ReturnType<typeof BotKeyboard.callback>[][] = [];
   for (let i = 0; i < options.length; i += 2) {
@@ -570,7 +569,6 @@ async function handleStageModuleSet(
   await cb.answer({ text: `${mod} = ${value}` });
 
   // Re-show the module selection
-  const defaults = getStageModuleDefaults();
   const current = value;
   const options = getModuleOptions()[mod] ?? [];
 
@@ -672,7 +670,7 @@ async function handleModuleRemove(
 async function handleModuleAdd(
   tg: TelegramClient,
   cb: CallbackQueryContext,
-  devTgId: number,
+  userId: number,
   parts: string[],
 ): Promise<void> {
   const modAbbr = parts[0];
@@ -683,8 +681,8 @@ async function handleModuleAdd(
   }
 
   await cb.answer({});
-  globalState.devConfigAwait = { type: "text", target: `mod_add_${cat}` };
-  await tg.sendText(devTgId, `➕ Send the new option name for ${cat}.\n\nUse snake_case (e.g. my_new_hook).`);
+  globalState.devConfigAwait = { type: "text", target: `mod_add_${cat}`, userId };
+  await tg.sendText(userId, `➕ Send the new option name for ${cat}.\n\nUse snake_case (e.g. my_new_hook).`);
 }
 
 // ── Reset ────────────────────────────────────────────────────────────────
@@ -710,23 +708,24 @@ async function handleReset(
   });
 }
 
-// ── Handle dev text/photo input ──────────────────────────────────────────
+// ── Handle config text/photo input ───────────────────────────────────────
 
-export async function handleDevConfigInput(
+export async function handleConfigInput(
   tg: TelegramClient,
   msg: MessageContext,
-  devTgId: number,
 ): Promise<boolean> {
   const await_ = globalState.devConfigAwait;
   if (!await_) return false;
 
+  const uid = msg.sender?.id;
+  if (!uid || uid !== await_.userId) return false;
+
   globalState.devConfigAwait = null;
 
   if (await_.type === "photo") {
-    // Expect a photo message
     const media = msg.media;
     if (!media || media.type !== "photo") {
-      await tg.sendText(devTgId, "❌ Expected a photo. Cancelled.");
+      await tg.sendText(uid, "❌ Expected a photo. Cancelled.");
       return true;
     }
 
@@ -734,7 +733,6 @@ export async function handleDevConfigInput(
       const buf = await tg.downloadAsBuffer(media);
       const buffer = Buffer.from(buf);
 
-      // Determine target filename
       let filename: string;
       if (await_.target === "doc") {
         filename = "doctor_portrait_rt.jpg";
@@ -759,10 +757,10 @@ export async function handleDevConfigInput(
         setBannerStyle(idx, relativePath);
       }
 
-      await tg.sendText(devTgId, `✅ Photo saved: ${relativePath}`);
+      await tg.sendText(uid, `✅ Photo saved: ${relativePath}`);
     } catch (err) {
-      await devAlert("devConfig / photo upload", err);
-      await tg.sendText(devTgId, "❌ Failed to save photo.");
+      await devAlert("config / photo upload", err);
+      await tg.sendText(uid, "❌ Failed to save photo.");
     }
     return true;
   }
@@ -770,7 +768,7 @@ export async function handleDevConfigInput(
   if (await_.type === "text") {
     const text = msg.text?.trim();
     if (!text) {
-      await tg.sendText(devTgId, "❌ Expected text. Cancelled.");
+      await tg.sendText(uid, "❌ Expected text. Cancelled.");
       return true;
     }
 
@@ -778,31 +776,31 @@ export async function handleDevConfigInput(
 
     if (target === "gate_prompt") {
       setHaikuPrompt(text);
-      await tg.sendText(devTgId, `✅ Gate prompt updated (${text.length} chars).`);
+      await tg.sendText(uid, `✅ Gate prompt updated (${text.length} chars).`);
     } else if (target === "sonnet_prompt") {
       setSonnetPrompt(text);
-      await tg.sendText(devTgId, `✅ Sonnet prompt updated (${text.length} chars).`);
+      await tg.sendText(uid, `✅ Sonnet prompt updated (${text.length} chars).`);
     } else if (target === "image_template") {
       setImageTemplate(text);
-      await tg.sendText(devTgId, `✅ Image template updated (${text.length} chars).`);
+      await tg.sendText(uid, `✅ Image template updated (${text.length} chars).`);
     } else if (target === "ann_doc") {
       setDoctorAnnotation(text);
-      await tg.sendText(devTgId, `✅ Doctor annotation updated.`);
+      await tg.sendText(uid, `✅ Doctor annotation updated.`);
     } else if (target.startsWith("ann_b")) {
       const idx = parseInt(target.slice(5), 10);
       setBannerAnnotation(idx, text);
-      await tg.sendText(devTgId, `✅ Banner ${idx + 1} annotation updated.`);
+      await tg.sendText(uid, `✅ Banner ${idx + 1} annotation updated.`);
     } else if (target.startsWith("mod_add_")) {
       const category = target.slice(8);
       const option = text.replace(/\s+/g, "_").toLowerCase();
       const added = addModuleOption(category, option);
       if (added) {
-        await tg.sendText(devTgId, `✅ Added "${option}" to ${category}.`);
+        await tg.sendText(uid, `✅ Added "${option}" to ${category}.`);
       } else {
-        await tg.sendText(devTgId, `⚠️ "${option}" already exists in ${category}.`);
+        await tg.sendText(uid, `⚠️ "${option}" already exists in ${category}.`);
       }
     } else {
-      await tg.sendText(devTgId, "❌ Unknown target. Cancelled.");
+      await tg.sendText(uid, "❌ Unknown target. Cancelled.");
     }
     return true;
   }

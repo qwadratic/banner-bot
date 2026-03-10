@@ -76,6 +76,7 @@ async function main() {
     commands: [
       { _: "botCommand", command: "start", description: "Почати" },
       { _: "botCommand", command: "cancel", description: "Скасувати сесію" },
+      { _: "botCommand", command: "config", description: "Налаштування" },
       { _: "botCommand", command: "dev", description: "Dev panel" },
     ],
   });

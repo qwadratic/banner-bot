@@ -59,9 +59,11 @@ export type Session = {
 export type DevConfigAwait = {
   type: "photo";
   target: string; // "doc" | "b0" | "b1"
+  userId: number;
 } | {
   type: "text";
   target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b0" | "mod_add_VISUAL_HOOK" etc.
+  userId: number;
 } | null;
 
 export type GlobalState = {

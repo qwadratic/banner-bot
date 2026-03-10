@@ -6,7 +6,7 @@ import { handleStart, handleCancel } from "./handlers/onCommand.js";
 import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
 import { handleDevCallback } from "./handlers/onDevPanel.js";
-import { handleDevConfigCallback, handleDevConfigInput } from "./handlers/onDevConfig.js";
+import { handleConfigCallback, handleConfigInput } from "./handlers/onDevConfig.js";
 
 export function registerBotHandlers(
   tg: TelegramClient,
@@ -66,6 +66,35 @@ export function registerBotHandlers(
     });
   });
 
+  // /config command — open config panel for any authorized user
+  dp.onNewMessage(filters.command("config"), async (msg) => {
+    const uid = msg.sender?.id;
+    if (!uid || !isAuthorized(uid)) return;
+
+    // For dev user, exit user mode
+    if (uid === devTgId) {
+      globalState.devUserMode = false;
+    }
+
+    await tg.sendText(uid, "⚙️ Configuration", {
+      replyMarkup: BotKeyboard.inline([
+        [
+          BotKeyboard.callback("📷 Photos", "cfg:photos"),
+          BotKeyboard.callback("📝 Annotations", "cfg:ann"),
+        ],
+        [
+          BotKeyboard.callback("🤖 Prompts", "cfg:pr"),
+          BotKeyboard.callback("🎨 Image tpl", "cfg:tpl"),
+        ],
+        [
+          BotKeyboard.callback("📊 Stage modules", "cfg:stg"),
+          BotKeyboard.callback("🧩 Module opts", "cfg:mo"),
+        ],
+        [BotKeyboard.callback("✕ Close", "cfg:close")],
+      ]),
+    });
+  });
+
   // Messages from dev user — check for config input awaiting first
   dp.onNewMessage(async (msg) => {
     const uid = msg.sender?.id;
@@ -73,8 +102,8 @@ export function registerBotHandlers(
     if (msg.text?.startsWith("/")) return;
 
     // If dev is awaiting config input (text or photo), handle it
-    if (globalState.devConfigAwait && !globalState.devUserMode) {
-      const handled = await handleDevConfigInput(tg, msg, devTgId);
+    if (globalState.devConfigAwait?.userId === uid && !globalState.devUserMode) {
+      const handled = await handleConfigInput(tg, msg);
       if (handled) return;
     }
 
@@ -83,13 +112,22 @@ export function registerBotHandlers(
     await handleMessage(tg, msg);
   });
 
-  // Text messages from authorized non-dev users (non-command)
-  dp.onNewMessage(filters.text, async (msg) => {
+  // Messages from authorized non-dev users (text + photo for config input)
+  dp.onNewMessage(async (msg) => {
     const uid = msg.sender?.id;
     if (!uid) return;
     if (uid === devTgId) return; // handled above
     if (!isAuthorized(uid)) return;
     if (msg.text?.startsWith("/")) return;
+
+    // Check if this user is awaiting config input
+    if (globalState.devConfigAwait?.userId === uid) {
+      const handled = await handleConfigInput(tg, msg);
+      if (handled) return;
+    }
+
+    // Regular text message handling
+    if (!msg.text) return;
     await handleMessage(tg, msg);
   });
 
@@ -97,10 +135,10 @@ export function registerBotHandlers(
   dp.onCallbackQuery(async (cb) => {
     const uid = cb.user.id;
 
-    // Dev config callbacks — only for dev user
+    // Config callbacks — any authorized user
     if (cb.dataStr?.startsWith("cfg:")) {
-      if (uid === devTgId) {
-        await handleDevConfigCallback(tg, cb, devTgId);
+      if (isAuthorized(uid)) {
+        await handleConfigCallback(tg, cb);
       } else {
         await cb.answer({});
       }
