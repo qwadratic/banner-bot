@@ -1,4 +1,4 @@
-import { TelegramClient, BotKeyboard } from "@mtcute/node";
+import { TelegramClient, BotKeyboard, InputMedia } from "@mtcute/node";
 import { Dispatcher, filters } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
 import { globalState } from "../session.js";
@@ -115,7 +115,10 @@ function statusText(): string {
   return text;
 }
 
-async function runHealthCheck(): Promise<string> {
+async function runHealthCheck(
+  tg: TelegramClient,
+  devTgId: number,
+): Promise<string> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     return "🔬 Health check\n\n❌ OPENROUTER_API_KEY not set";
@@ -125,11 +128,17 @@ async function runHealthCheck(): Promise<string> {
     checkTextModel(
       "Gate",
       resolvedModels.gate,
-      'Reply with valid JSON: {"ok": true}',
+      'Respond with ONLY this exact JSON object, no markdown, no code fences, no explanation: {"ok": true}',
       apiKey,
       (text) => {
         try {
-          const json = JSON.parse(text);
+          // Strip markdown code fences if present
+          let cleaned = text;
+          const fenceMatch = cleaned.match(/^```(?:json)?\s*\n?([\s\S]*?)\n?```$/m);
+          if (fenceMatch) {
+            cleaned = fenceMatch[1].trim();
+          }
+          const json = JSON.parse(cleaned);
           return json.ok === true;
         } catch {
           return false;
@@ -155,7 +164,27 @@ async function runHealthCheck(): Promise<string> {
 
   for (const result of checks) {
     if (result.status === "fulfilled") {
-      text += `\n${result.value}`;
+      const val = result.value;
+      if (typeof val === "string") {
+        text += `\n${val}`;
+      } else {
+        // ImageCheckResult
+        text += `\n${val.text}`;
+        // Send generated image as photo to dev
+        if (val.imageBase64 && val.imageMime) {
+          try {
+            const buf = Buffer.from(val.imageBase64, "base64");
+            const ext = val.imageMime.split("/")[1] || "png";
+            await tg.sendMedia(devTgId, InputMedia.photo(
+              new Uint8Array(buf),
+              { fileName: `healthcheck.${ext}` },
+            ), { caption: "🔬 Image model health check output" });
+          } catch (e) {
+            console.error("[healthcheck] Failed to send image:", e);
+            text += `\n  ⚠️ Could not send image preview`;
+          }
+        }
+      }
     } else {
       text += `\n❌ Unexpected error: ${result.reason}`;
     }
@@ -241,12 +270,18 @@ async function checkTextModel(
   }
 }
 
+interface ImageCheckResult {
+  text: string;
+  imageBase64?: string; // raw base64 (no data: prefix)
+  imageMime?: string;
+}
+
 async function checkImageModel(
   label: string,
   model: string,
   prompt: string,
   apiKey: string,
-): Promise<string> {
+): Promise<ImageCheckResult> {
   const start = Date.now();
   try {
     const controller = new AbortController();
@@ -273,60 +308,56 @@ async function checkImageModel(
     const elapsed = Date.now() - start;
 
     console.log(`[healthcheck] ${label} HTTP status: ${resp.status}, elapsed: ${elapsed}ms`);
-    console.log(`[healthcheck] ${label} response headers:`, JSON.stringify(Object.fromEntries(resp.headers.entries())));
 
     if (!resp.ok) {
       const body = await resp.text();
-      console.log(`[healthcheck] ${label} error body:`, body);
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}`;
+      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: HTTP ${resp.status}: ${body}` };
     }
 
     const rawBody = await resp.text();
-    console.log(`[healthcheck] ${label} raw response body (first 2000 chars):`, rawBody.slice(0, 2000));
     console.log(`[healthcheck] ${label} raw response body length:`, rawBody.length);
 
-    const data = JSON.parse(rawBody) as {
-      choices?: Array<{
-        message?: {
-          content?: string | Array<{ type: string; image_url?: { url?: string } }>;
-        };
-      }>;
-      error?: { message?: string; code?: number };
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = JSON.parse(rawBody) as any;
 
     if (data.error) {
-      console.log(`[healthcheck] ${label} API error in body:`, JSON.stringify(data.error));
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}`;
+      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: API error: ${data.error.message ?? JSON.stringify(data.error)}` };
     }
 
     const message = data.choices?.[0]?.message;
-    const content = message?.content;
 
-    console.log(`[healthcheck] ${label} message object:`, JSON.stringify(message));
-    console.log(`[healthcheck] ${label} content type: ${typeof content}, isArray: ${Array.isArray(content)}`);
-    if (typeof content === "string") {
-      console.log(`[healthcheck] ${label} content length: ${content.length}`);
-      console.log(`[healthcheck] ${label} content preview: ${content.slice(0, 500)}`);
-    } else if (Array.isArray(content)) {
-      console.log(`[healthcheck] ${label} content array length: ${content.length}`);
-      console.log(`[healthcheck] ${label} content array:`, JSON.stringify(content).slice(0, 1000));
-    } else {
-      console.log(`[healthcheck] ${label} content value:`, content);
+    // OpenRouter returns Gemini image output in message.images[]
+    // Each entry: { type: "image_url", image_url: { url: "data:<mime>;base64,..." } }
+    const images = message?.images as
+      | Array<{ type: string; image_url?: { url?: string } }>
+      | undefined;
+
+    if (images && images.length > 0) {
+      const dataUrl = images[0].image_url?.url ?? "";
+      const match = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        console.log(`[healthcheck] ${label} got image: mime=${match[1]}, base64 length=${match[2].length}`);
+        return {
+          text: `${label}    ${model}\n✅ OK — ${elapsed}ms (image ${match[1]})`,
+          imageBase64: match[2],
+          imageMime: match[1],
+        };
+      }
     }
 
-    // Check if we got any non-empty response (image data may come in various formats)
+    // Fallback: check content field (text or multipart)
+    const content = message?.content;
     const hasContent =
       content != null &&
       (typeof content === "string"
         ? content.length > 0
         : Array.isArray(content) && content.length > 0);
 
-    console.log(`[healthcheck] ${label} hasContent: ${hasContent}`);
-
     if (hasContent) {
-      return `${label}    ${model}\n✅ OK — ${elapsed}ms`;
+      return { text: `${label}    ${model}\n✅ OK — ${elapsed}ms` };
     } else {
-      return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: Empty response`;
+      console.log(`[healthcheck] ${label} no image and no content. message keys:`, Object.keys(message ?? {}));
+      return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: No image or text content` };
     }
   } catch (err) {
     const elapsed = Date.now() - start;
@@ -337,7 +368,7 @@ async function checkImageModel(
         : err instanceof Error
           ? err.message
           : String(err);
-    return `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: ${msg}`;
+    return { text: `${label}    ${model}\n❌ FAILED — ${elapsed}ms\nError: ${msg}` };
   }
 }
 
@@ -405,7 +436,7 @@ export function registerDevPanel(
 
         case "healthcheck": {
           await cb.answer({ text: "Running health checks..." });
-          const result = await runHealthCheck();
+          const result = await runHealthCheck(tg, devTgId);
           // Send as new message so it persists in chat history
           await tg.sendText(devTgId, result);
           break;
