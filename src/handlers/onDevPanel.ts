@@ -188,9 +188,14 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
       }
     }
 
-    // If we got nothing at all, mark it
+    // If we got nothing at all, dump the message object for debugging
     if (!result.rawContent && !result.imageBase64) {
-      result.error = `Empty response (message keys: ${result.messageKeys?.join(", ") ?? "none"})`;
+      const msgDump = JSON.stringify(message, (_k, v) => {
+        // Truncate long encrypted/base64 blobs
+        if (typeof v === "string" && v.length > 200) return v.slice(0, 200) + "...";
+        return v;
+      });
+      result.error = `No content or image. Raw message: ${msgDump}`;
     }
 
     return result;
@@ -203,14 +208,19 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
   }
 }
 
+/** Sanitize a string so it renders as plain text inside md() */
+function plain(s: string): string {
+  return md.escape(s).replace(/`/g, "'");
+}
+
 function formatCheckResult(r: CheckResult): string {
   const icon = r.error ? "❌" : "✅";
-  let line = `${icon} **${r.label}**  \`${r.model}\`  ${r.elapsed}ms`;
+  let line = `${icon} **${r.label}**  \`${plain(r.model)}\`  ${r.elapsed}ms`;
   if (r.error) {
-    line += `\n  ${md.escape(r.error.slice(0, 400))}`;
+    line += `\n  ${plain(r.error.slice(0, 800))}`;
   }
   if (r.rawContent != null) {
-    line += `\n  → \`${md.escape(r.rawContent.slice(0, 200))}\``;
+    line += `\n  → \`${plain(r.rawContent.slice(0, 200))}\``;
   }
   if (r.imageBase64) {
     const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
