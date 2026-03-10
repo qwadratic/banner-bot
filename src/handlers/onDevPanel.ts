@@ -134,7 +134,7 @@ interface CheckResult {
 }
 
 const HEALTHCHECK_MODELS: ModelCheck[] = [
-  { label: "Gate", model: resolvedModels.gate, prompt: 'Reply with valid JSON: {"ok": true}', maxTokens: 50 },
+  { label: "Gate", model: resolvedModels.gate, prompt: 'Tell me a mass-appeal one-liner joke. Max 15 words.', maxTokens: 60 },
   { label: "Analyze", model: resolvedModels.analyze, prompt: "Reply with the single word: READY", maxTokens: 50 },
   { label: "Image", model: resolvedModels.image, prompt: "A solid dark green rectangle, no text.", maxTokens: 1000 },
 ];
