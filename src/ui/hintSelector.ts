@@ -105,11 +105,20 @@ export function styleStepKeyboard(session: Session): ReplyMarkup {
   const styleHints = CONFIG.hints.style;
   const hasSelection = !!session.selectedHints.style;
 
-  // 2 buttons per row for full label visibility
-  const rows: ReturnType<typeof BotKeyboard.callback>[][] = [];
-  for (let i = 0; i < styleHints.length; i += 2) {
+  // "Стандартний" (last item) goes first as full-width default option
+  const standardHint = styleHints.find((h) => h.value === "standard")!;
+  const rest = styleHints.filter((h) => h.value !== "standard");
+
+  const standardSelected = session.selectedHints.style === standardHint.value;
+  const standardLabel = standardSelected ? `✓ ${standardHint.label}` : standardHint.label;
+  const rows: ReturnType<typeof BotKeyboard.callback>[][] = [
+    [BotKeyboard.callback(standardLabel, `hint_style:${standardHint.value}`)],
+  ];
+
+  // Remaining styles in pairs
+  for (let i = 0; i < rest.length; i += 2) {
     rows.push(
-      styleHints.slice(i, i + 2).map((h) => {
+      rest.slice(i, i + 2).map((h) => {
         const selected = session.selectedHints.style === h.value;
         const label = selected ? `✓ ${h.label}` : h.label;
         return BotKeyboard.callback(label, `hint_style:${h.value}`);
@@ -122,5 +131,8 @@ export function styleStepKeyboard(session: Session): ReplyMarkup {
     ? [BotKeyboard.callback("✅ Аналізувати", "hints:confirm")]
     : [BotKeyboard.callback("⏭ Пропустити (без підказки)", "hints:skip_style")];
 
-  return BotKeyboard.inline([...rows, actionRow]);
+  rows.push(actionRow);
+  rows.push([BotKeyboard.callback("← Назад", "hints:back_to_stage")]);
+
+  return BotKeyboard.inline(rows);
 }

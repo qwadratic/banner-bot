@@ -173,6 +173,18 @@ async function handleHints(tg: TelegramClient, cb: CallbackQueryContext, session
       text: styleStepText(session),
       replyMarkup: styleStepKeyboard(session),
     });
+  } else if (value === "back_to_stage") {
+    // Style step → back to Stage step
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    session.phase = "HINT_STAGE";
+    await cb.answer({});
+    await cb.editMessage({
+      text: stageStepText(session),
+      replyMarkup: stageStepKeyboard(session),
+    });
   } else if (value === "skip_style") {
     // Skip style, run analysis
     if (session.phase !== "HINT_STYLE") {
