@@ -171,10 +171,12 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
     const message = data.choices?.[0]?.message;
     const result: CheckResult = { label, model, elapsed, messageKeys: Object.keys(message ?? {}) };
 
-    // Extract text content
-    const content = message?.content;
+    // Extract text content, strip markdown code fences if present
+    let content = message?.content;
     if (typeof content === "string" && content.length > 0) {
-      result.rawContent = content;
+      const fence = content.match(/^```\w*\n?([\s\S]*?)\n?```$/);
+      if (fence) content = fence[1];
+      result.rawContent = content.trim();
     }
 
     // Extract image from message.images[] (OpenRouter/Gemini)
