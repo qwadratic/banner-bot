@@ -1,7 +1,7 @@
 export const CONFIG = {
   models: {
     gate: "anthropic/claude-haiku-4-5",
-    analyze: "anthropic/claude-sonnet-4",
+    analyze: "anthropic/claude-sonnet-4.6",
     image: "google/gemini-3.1-flash-image-preview",
   },
 } as const;
