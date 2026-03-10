@@ -205,16 +205,16 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
 
 function formatCheckResult(r: CheckResult): string {
   const icon = r.error ? "❌" : "✅";
-  let line = `${icon} *${r.label}*  \`${r.model}\`  ${r.elapsed}ms`;
+  let line = `${icon} **${r.label}**  \`${r.model}\`  ${r.elapsed}ms`;
   if (r.error) {
-    line += `\n   ${md.escape(r.error.slice(0, 400))}`;
+    line += `\n  ${md.escape(r.error.slice(0, 400))}`;
   }
   if (r.rawContent != null) {
-    line += `\n   → \`${md.escape(r.rawContent.slice(0, 200))}\``;
+    line += `\n  → \`${md.escape(r.rawContent.slice(0, 200))}\``;
   }
   if (r.imageBase64) {
     const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
-    line += `\n   → image ${r.imageMime} ${kb} KB`;
+    line += `\n  → image ${r.imageMime} ${kb} KB`;
   }
   return line;
 }
@@ -235,7 +235,7 @@ async function runHealthCheck(
   );
 
   // Build report text
-  const lines = ["🔬 *Health check*\n"];
+  const lines = ["🔬 **Health check**\n"];
   for (const r of results) {
     lines.push(formatCheckResult(r));
   }
@@ -257,7 +257,7 @@ async function runHealthCheck(
     } catch (e) {
       // If photo send fails, fall back to text-only
       const errMsg = e instanceof Error ? e.message : String(e);
-      await tg.sendText(devTgId, md(`${report}\n\n⚠️ _Failed to attach image: ${md.escape(errMsg.slice(0, 200))}_`));
+      await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`));
     }
   } else {
     // No image — send text-only
