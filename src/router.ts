@@ -95,32 +95,31 @@ export function registerBotHandlers(
     });
   });
 
-  // Messages from dev user — check for config input awaiting first
-  dp.onNewMessage(async (msg) => {
-    const uid = msg.sender?.id;
-    if (uid !== devTgId) return;
-    if (msg.text?.startsWith("/")) return;
-
-    // If dev is awaiting config input (text or photo), handle it
-    if (globalState.devConfigAwait?.userId === uid && !globalState.devUserMode) {
-      const handled = await handleConfigInput(tg, msg);
-      if (handled) return;
-    }
-
-    // Otherwise, fall through to regular message handling only if in user mode
-    if (!globalState.devUserMode) return;
-    await handleMessage(tg, msg);
-  });
-
-  // Messages from authorized non-dev users (text + photo for config input)
+  // All non-command messages — single handler for all users
   dp.onNewMessage(async (msg) => {
     const uid = msg.sender?.id;
     if (!uid) return;
-    if (uid === devTgId) return; // handled above
-    if (!isAuthorized(uid)) return;
     if (msg.text?.startsWith("/")) return;
 
-    // Check if this user is awaiting config input
+    console.log(`[router] message from ${uid}: ${msg.text?.slice(0, 100) ?? "(no text)"}`);
+
+    // Dev user
+    if (uid === devTgId) {
+      // Config input awaiting (only outside user mode)
+      if (globalState.devConfigAwait?.userId === uid && !globalState.devUserMode) {
+        const handled = await handleConfigInput(tg, msg);
+        if (handled) return;
+      }
+      // Only process as regular message if in user mode
+      if (!globalState.devUserMode) return;
+      await handleMessage(tg, msg);
+      return;
+    }
+
+    // Non-dev users
+    if (!isAuthorized(uid)) return;
+
+    // Config input awaiting
     if (globalState.devConfigAwait?.userId === uid) {
       const handled = await handleConfigInput(tg, msg);
       if (handled) return;
