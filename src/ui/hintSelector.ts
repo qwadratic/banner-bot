@@ -57,24 +57,26 @@ export function stageStepText(session: Session): string {
 
 export function stageStepKeyboard(session: Session): ReplyMarkup {
   const stageHints = CONFIG.hints.stage;
+  const hasSelection = !!session.selectedHints.stage;
 
-  const row1 = stageHints.slice(0, 4).map((h) => {
-    const selected = session.selectedHints.stage === h.value;
-    const label = selected ? `✓ ${h.label}` : h.label;
-    return BotKeyboard.callback(label, `hint_stage:${h.value}`);
-  });
-  const row2 = stageHints.slice(4).map((h) => {
-    const selected = session.selectedHints.stage === h.value;
-    const label = selected ? `✓ ${h.label}` : h.label;
-    return BotKeyboard.callback(label, `hint_stage:${h.value}`);
-  });
+  // 2 buttons per row for full label visibility
+  const rows: ReturnType<typeof BotKeyboard.callback>[][] = [];
+  for (let i = 0; i < stageHints.length; i += 2) {
+    rows.push(
+      stageHints.slice(i, i + 2).map((h) => {
+        const selected = session.selectedHints.stage === h.value;
+        const label = selected ? `✓ ${h.label}` : h.label;
+        return BotKeyboard.callback(label, `hint_stage:${h.value}`);
+      }),
+    );
+  }
 
-  const actionRow = [
-    BotKeyboard.callback("Далі →", "hints:next"),
-    BotKeyboard.callback("⏭ Пропустити", "hints:skip_stage"),
-  ];
+  // Show "Далі →" when something is selected, otherwise "Пропустити"
+  const actionRow = hasSelection
+    ? [BotKeyboard.callback("Далі →", "hints:next")]
+    : [BotKeyboard.callback("⏭ Пропустити (без підказки)", "hints:skip_stage")];
 
-  return BotKeyboard.inline([row1, row2, actionRow]);
+  return BotKeyboard.inline([...rows, actionRow]);
 }
 
 // ── Step 2: Style selection ─────────────────────────────────────────────
@@ -101,22 +103,36 @@ export function styleStepText(session: Session): string {
 
 export function styleStepKeyboard(session: Session): ReplyMarkup {
   const styleHints = CONFIG.hints.style;
+  const hasSelection = !!session.selectedHints.style;
 
-  const row1 = styleHints.slice(0, 3).map((h) => {
-    const selected = session.selectedHints.style === h.value;
-    const label = selected ? `✓ ${h.label}` : h.label;
-    return BotKeyboard.callback(label, `hint_style:${h.value}`);
-  });
-  const row2 = styleHints.slice(3).map((h) => {
-    const selected = session.selectedHints.style === h.value;
-    const label = selected ? `✓ ${h.label}` : h.label;
-    return BotKeyboard.callback(label, `hint_style:${h.value}`);
-  });
+  // "Стандартний" (last item) goes first as full-width default option
+  const standardHint = styleHints.find((h) => h.value === "standard")!;
+  const rest = styleHints.filter((h) => h.value !== "standard");
 
-  const actionRow = [
-    BotKeyboard.callback("✅ Аналізувати", "hints:confirm"),
-    BotKeyboard.callback("⏭ Пропустити", "hints:skip_style"),
+  const standardSelected = session.selectedHints.style === standardHint.value;
+  const standardLabel = standardSelected ? `✓ ${standardHint.label}` : standardHint.label;
+  const rows: ReturnType<typeof BotKeyboard.callback>[][] = [
+    [BotKeyboard.callback(standardLabel, `hint_style:${standardHint.value}`)],
   ];
 
-  return BotKeyboard.inline([row1, row2, actionRow]);
+  // Remaining styles in pairs
+  for (let i = 0; i < rest.length; i += 2) {
+    rows.push(
+      rest.slice(i, i + 2).map((h) => {
+        const selected = session.selectedHints.style === h.value;
+        const label = selected ? `✓ ${h.label}` : h.label;
+        return BotKeyboard.callback(label, `hint_style:${h.value}`);
+      }),
+    );
+  }
+
+  // Show "Аналізувати" when something is selected, otherwise "Пропустити"
+  const actionRow = hasSelection
+    ? [BotKeyboard.callback("🔍 Аналізувати", "hints:confirm")]
+    : [BotKeyboard.callback("⏭ Пропустити (без підказки)", "hints:skip_style")];
+
+  rows.push(actionRow);
+  rows.push([BotKeyboard.callback("← Назад", "hints:back_to_stage")]);
+
+  return BotKeyboard.inline(rows);
 }

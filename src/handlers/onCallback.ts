@@ -11,8 +11,7 @@ import {
   stageStepText, stageStepKeyboard,
   styleStepText, styleStepKeyboard,
 } from "../ui/hintSelector.js";
-import { analysisCardText, analysisCardKeyboard, stagePickerKeyboard } from "../ui/analysisCard.js";
-import { moduleEditorText, moduleEditorKeyboard, moduleCategoryKeyboard } from "../ui/moduleEditor.js";
+import { analysisCardText, analysisCardKeyboard } from "../ui/analysisCard.js";
 
 export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContext): Promise<void> {
   const data = cb.dataStr;
@@ -51,15 +50,6 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
         break;
       case "stage":
         await handleStage(tg, cb, session, value);
-        break;
-      case "modules":
-        await handleModules(tg, cb, session, value);
-        break;
-      case "module_cat":
-        await handleModuleCategory(cb, session, value);
-        break;
-      case "module":
-        await handleModuleSelect(cb, session, rest);
         break;
       case "prompt":
         await handlePrompt(tg, cb, session);
@@ -173,6 +163,18 @@ async function handleHints(tg: TelegramClient, cb: CallbackQueryContext, session
       text: styleStepText(session),
       replyMarkup: styleStepKeyboard(session),
     });
+  } else if (value === "back_to_stage") {
+    // Style step → back to Stage step
+    if (session.phase !== "HINT_STYLE") {
+      await cb.answer({});
+      return;
+    }
+    session.phase = "HINT_STAGE";
+    await cb.answer({});
+    await cb.editMessage({
+      text: stageStepText(session),
+      replyMarkup: stageStepKeyboard(session),
+    });
   } else if (value === "skip_style") {
     // Skip style, run analysis
     if (session.phase !== "HINT_STYLE") {
@@ -212,6 +214,8 @@ async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session
     session.modules = result.modules;
     session.sonnetOutput = result;
     session.userOverrides = {};
+
+    session.generatedPrompt = assemblePrompt(result.modules, {}, result);
     session.phase = "ANALYSIS_READY";
 
     await cb.editMessage({
@@ -308,22 +312,17 @@ function resultKeyboard() {
 // ── Stage management ─────────────────────────────────────────────────────
 
 async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "pick") {
-    await cb.answer({});
-    await cb.editMessage({
-      text: "Оберіть етап:",
-      replyMarkup: stagePickerKeyboard(),
-    });
-  } else if (value.startsWith("set:")) {
-    const stage = value.slice(4);
-    await cb.answer({});
-    await reanalyzeWithStage(tg, cb, session, stage);
-  } else if (value === "use_model") {
+  if (value === "use_model") {
     // User accepts the model's suggested stage — clear conflict state
     session.modelAgreesWithHint = true;
     session.disagreementReason = null;
     session.selectedHints.stage = session.detectedStage ?? undefined;
+
     session.phase = "ANALYSIS_READY";
+    // Re-assemble prompt with accepted stage (modules unchanged)
+    if (session.modules && session.sonnetOutput) {
+      session.generatedPrompt = assemblePrompt(session.modules, session.userOverrides, session.sonnetOutput);
+    }
     await cb.answer({});
     await cb.editMessage({
       text: analysisCardText(session),
@@ -338,14 +337,6 @@ async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session
     } else {
       await cb.answer({});
     }
-  } else if (value === "back") {
-    // Return to analysis card from stage picker
-    session.phase = "ANALYSIS_READY";
-    await cb.answer({});
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
   } else {
     await cb.answer({});
   }
@@ -367,6 +358,8 @@ async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, 
     session.modules = result.modules;
     session.sonnetOutput = result;
     session.userOverrides = {};
+
+    session.generatedPrompt = assemblePrompt(result.modules, {}, result);
     session.phase = "ANALYSIS_READY";
 
     await cb.editMessage({
@@ -381,53 +374,6 @@ async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, 
       replyMarkup: analysisCardKeyboard(session),
     });
   }
-}
-
-// ── Module editing ───────────────────────────────────────────────────────
-
-async function handleModules(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "edit") {
-    await cb.answer({});
-    await cb.editMessage({
-      text: moduleEditorText(session),
-      replyMarkup: moduleEditorKeyboard(session),
-    });
-  } else if (value === "done") {
-    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
-  } else if (value === "back") {
-    session.phase = "ANALYSIS_READY";
-    await cb.answer({});
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  } else {
-    await cb.answer({});
-  }
-}
-
-async function handleModuleCategory(cb: CallbackQueryContext, session: Session, category: string): Promise<void> {
-  await cb.answer({});
-  await cb.editMessage({
-    text: `⚙️ ${category}\n\nОберіть значення:`,
-    replyMarkup: moduleCategoryKeyboard(category, session),
-  });
-}
-
-async function handleModuleSelect(cb: CallbackQueryContext, session: Session, parts: string[]): Promise<void> {
-  // parts = [CATEGORY, value]
-  const category = parts[0];
-  const value = parts.slice(1).join(":");
-
-  if (category && value) {
-    (session.userOverrides as Record<string, string>)[category] = value;
-  }
-
-  await cb.answer({});
-  await cb.editMessage({
-    text: moduleEditorText(session),
-    replyMarkup: moduleEditorKeyboard(session),
-  });
 }
 
 // ── Prompt viewing ───────────────────────────────────────────────────────
