@@ -103,6 +103,7 @@ async function showConfigMain(cb: CallbackQueryContext): Promise<void> {
         BotKeyboard.callback("📊 Stage modules", "cfg:stg"),
         BotKeyboard.callback("🧩 Module opts", "cfg:mo"),
       ],
+      [BotKeyboard.callback("👥 Admins", "dev:admins")],
       [BotKeyboard.callback("✕ Close", "cfg:close")],
     ]),
   });

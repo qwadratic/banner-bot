@@ -5,7 +5,7 @@ import { globalState } from "./session.js";
 import { handleStart, handleCancel } from "./handlers/onCommand.js";
 import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
-import { handleDevCallback } from "./handlers/onDevPanel.js";
+import { handleDevCallback, devPanelKeyboard, startupMessageText } from "./handlers/onDevPanel.js";
 import { handleConfigCallback, handleConfigInput } from "./handlers/onDevConfig.js";
 import { getAdminUserIds } from "./runtimeConfig.js";
 
@@ -50,19 +50,8 @@ export function registerBotHandlers(
       globalState.activeSession = null;
     }
 
-    await tg.sendText(uid, "🛠 Dev Panel", {
-      replyMarkup: BotKeyboard.inline([
-        [
-          BotKeyboard.callback("📊 Status", "dev:status"),
-          BotKeyboard.callback("🔬 Health check", "dev:healthcheck"),
-        ],
-        [
-          BotKeyboard.callback("🔄 Restart", "dev:restart"),
-          BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
-        ],
-        [BotKeyboard.callback("⚙️ Config", "cfg:main")],
-        [BotKeyboard.callback("👤 User mode", "dev:usermode")],
-      ]),
+    await tg.sendText(uid, startupMessageText(), {
+      replyMarkup: devPanelKeyboard(),
     });
   });
 
@@ -90,6 +79,7 @@ export function registerBotHandlers(
           BotKeyboard.callback("📊 Stage modules", "cfg:stg"),
           BotKeyboard.callback("🧩 Module opts", "cfg:mo"),
         ],
+        [BotKeyboard.callback("👥 Admins", "dev:admins")],
         [BotKeyboard.callback("✕ Close", "cfg:close")],
       ]),
     });
