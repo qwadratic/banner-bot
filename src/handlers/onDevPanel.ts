@@ -65,12 +65,12 @@ export function devPanelKeyboard() {
     ],
     [
       BotKeyboard.callback("📊 Sessions", "dev:sessions"),
+      BotKeyboard.callback("⚙️ Config", "cfg:main"),
     ],
     [
-      BotKeyboard.callback("⚙️ Config", "cfg:main"),
-      BotKeyboard.callback("⬇️ Update", "dev:update"),
+      BotKeyboard.callback("⬇️ Pull & Reboot", "dev:update"),
+      BotKeyboard.callback("🔄 Reboot", "dev:restart"),
     ],
-    [BotKeyboard.callback("🔄 Reboot", "dev:restart")],
   ];
 
   return BotKeyboard.inline(rows);
