@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { TelegramClient, BotKeyboard, InputMedia, md } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
@@ -5,7 +6,7 @@ import { globalState } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import { getAdminUserIds, addAdminUserId, removeAdminUserId } from "../runtimeConfig.js";
 
-const startTime = Date.now();
+export const startTime = Date.now();
 
 function formatUptime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -20,40 +21,57 @@ function formatUptime(ms: number): string {
   return parts.join(" ");
 }
 
-function devPanelText(): string {
-  const testTag = globalState.testMode ? "  🧪 TEST MODE" : "";
-  const session = globalState.activeSession;
-  if (session) {
-    return (
-      `🛠 Dev Panel${testTag}  |  Session: IN_PROGRESS\n` +
-      `User: ${session.userId}  Phase: ${session.phase}`
-    );
+function getGitInfo(): { branch: string; hash: string; message: string } {
+  try {
+    const branch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+    // Get latest non-merge commit
+    const log = execSync('git log --no-merges -1 --format="%h|%s"', { encoding: "utf8" }).trim();
+    const [hash, ...msgParts] = log.split("|");
+    return { branch, hash, message: msgParts.join("|") };
+  } catch {
+    return { branch: "unknown", hash: "?", message: "" };
   }
-  return `🛠 Dev Panel${testTag}  |  Session: none`;
+}
+
+function formatCET(date: Date): string {
+  return date.toLocaleString("en-GB", {
+    timeZone: "Europe/Berlin",
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+export function startupMessageText(): string {
+  const uptime = formatUptime(Date.now() - startTime);
+  const cetTime = formatCET(new Date(startTime));
+  const git = getGitInfo();
+  return (
+    `Up since ${cetTime} CET (${uptime})\n` +
+    `${git.branch} ${git.hash}\n` +
+    git.message
+  );
 }
 
 export function devPanelKeyboard() {
-  const session = globalState.activeSession;
-  const testLabel = globalState.testMode ? "🧪 Test mode: ON" : "🧪 Test mode: OFF";
+  const testLabel = globalState.testMode ? "🧪 UI Test: ON" : "🧪 UI Test: OFF";
   const rows = [
     [
-      BotKeyboard.callback("📊 Status", "dev:status"),
-      BotKeyboard.callback("🔬 Health check", "dev:healthcheck"),
+      BotKeyboard.callback("🔬 Model Test", "dev:modeltest"),
+      BotKeyboard.callback(testLabel, "dev:uitest"),
     ],
     [
-      BotKeyboard.callback("🔄 Restart", "dev:restart"),
-      BotKeyboard.callback("⬇️ Update & restart", "dev:update"),
-    ],
-    [
+      BotKeyboard.callback("📊 Sessions", "dev:sessions"),
       BotKeyboard.callback("⚙️ Config", "cfg:main"),
-      BotKeyboard.callback(testLabel, "dev:testmode"),
     ],
-    [BotKeyboard.callback("👥 Admins", "dev:admins")],
+    [
+      BotKeyboard.callback("⬇️ Update", "dev:update"),
+      BotKeyboard.callback("🔄 Reboot", "dev:restart"),
+    ],
+    [BotKeyboard.callback("👤 Enter User Mode", "dev:usermode")],
   ];
-
-  if (!session) {
-    rows.push([BotKeyboard.callback("👤 User mode", "dev:usermode")]);
-  }
 
   return BotKeyboard.inline(rows);
 }
@@ -64,59 +82,31 @@ function backKeyboard() {
   ]);
 }
 
-function statusText(): string {
+function sessionsText(): string {
   const uptime = formatUptime(Date.now() - startTime);
+  const session = globalState.activeSession;
 
-  const envVars: Array<{ name: string; value: string | undefined }> = [
-    { name: "BOT_TOKEN", value: process.env.BOT_TOKEN },
-    { name: "OPENROUTER_API_KEY", value: process.env.OPENROUTER_API_KEY },
-    { name: "ADMIN_USER_IDS", value: process.env.ADMIN_USER_IDS },
-    { name: "DEV_TG_ID", value: process.env.DEV_TG_ID },
-  ];
-
-  const modelVars: Array<{
-    name: string;
-    envKey: string;
-    envValue: string | undefined;
-    configKey: keyof typeof CONFIG.models;
-  }> = [
-    {
-      name: "MODEL_GATE",
-      envKey: "MODEL_GATE",
-      envValue: process.env.MODEL_GATE,
-      configKey: "gate",
-    },
-    {
-      name: "MODEL_ANALYZE",
-      envKey: "MODEL_ANALYZE",
-      envValue: process.env.MODEL_ANALYZE,
-      configKey: "analyze",
-    },
-    {
-      name: "MODEL_IMAGE",
-      envKey: "MODEL_IMAGE",
-      envValue: process.env.MODEL_IMAGE,
-      configKey: "image",
-    },
-  ];
-
-  let text = `📊 Status\n\n`;
+  let text = `🧠 Memory\n\n`;
   text += `Uptime: ${uptime}\n`;
-  text += `Node: ${process.version}\n`;
-  text += `PID: ${process.pid}\n\n`;
-  text += `Env vars:\n`;
+  text += `Test mode: ${globalState.testMode ? "ON" : "OFF"}\n`;
+  text += `Dev user mode: ${globalState.devUserMode ? "ON" : "OFF"}\n`;
+  text += `Config await: ${globalState.devConfigAwait ? globalState.devConfigAwait.type : "none"}\n\n`;
 
-  for (const v of envVars) {
-    const icon = v.value ? "✅" : "⬜";
-    text += `  ${v.name.padEnd(20)} ${icon}\n`;
-  }
-
-  for (const v of modelVars) {
-    const isOverride = !!v.envValue;
-    const icon = isOverride ? "✅" : "⬜";
-    const slug = isOverride ? v.envValue : CONFIG.models[v.configKey];
-    const source = isOverride ? "(override)" : "(config default)";
-    text += `  ${v.name.padEnd(20)} ${icon}  ${slug}  ${source}\n`;
+  if (session) {
+    const runtime = formatUptime(Date.now() - session.lastActivityAt);
+    const sessionAge = formatUptime(Date.now() - (session.lastActivityAt - 0));
+    text += `Active session:\n`;
+    text += `  User: ${session.userId}\n`;
+    text += `  Session ID: ${session.sessionId.slice(0, 8)}…\n`;
+    text += `  Phase: ${session.phase}\n`;
+    text += `  Last activity: ${runtime} ago\n`;
+    text += `  Stage: ${session.detectedStage ?? "—"}\n`;
+    text += `  Confidence: ${session.stageConfidence ?? "—"}\n`;
+    text += `  Hints: ${session.selectedHints.stage ?? "—"} / ${session.selectedHints.style ?? "—"}\n`;
+    text += `  Generations: ${session.generationCount}\n`;
+    text += `  Warning sent: ${session.warningSent ? "yes" : "no"}\n`;
+  } else {
+    text += `Active session: none`;
   }
 
   return text;
@@ -295,6 +285,22 @@ async function execShell(cmd: string): Promise<{ stdout: string; stderr: string;
   });
 }
 
+export function shutdownMessageText(): string {
+  const uptime = formatUptime(Date.now() - startTime);
+  const session = globalState.activeSession;
+  let text = `🔴 Bot shutting down\nUptime was: ${uptime}\n`;
+  if (session) {
+    const sessionStart = new Date(session.lastActivityAt);
+    text += `\nActive session:\n`;
+    text += `  User: ${session.userId}\n`;
+    text += `  Started: ${formatCET(sessionStart)} CET\n`;
+    text += `  Phase: ${session.phase}`;
+  } else {
+    text += `\nNo active session`;
+  }
+  return text;
+}
+
 export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryContext, devTgId: number): Promise<void> {
   const data = cb.dataStr;
   if (!data?.startsWith("dev:")) {
@@ -306,17 +312,17 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
 
   try {
     switch (action) {
-      case "status": {
+      case "sessions": {
         await cb.answer({});
         await cb.editMessage({
-          text: statusText(),
+          text: sessionsText(),
           replyMarkup: backKeyboard(),
         });
         break;
       }
 
-      case "healthcheck": {
-        await cb.answer({ text: "Running health checks..." });
+      case "modeltest": {
+        await cb.answer({ text: "Running model tests..." });
         await runHealthCheck(tg, devTgId);
         break;
       }
@@ -364,11 +370,11 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
-      case "testmode": {
+      case "uitest": {
         globalState.testMode = !globalState.testMode;
-        await cb.answer({ text: globalState.testMode ? "Test mode ON — API calls are mocked" : "Test mode OFF — real API calls" });
+        await cb.answer({ text: globalState.testMode ? "UI Test ON — API calls are mocked" : "UI Test OFF — real API calls" });
         await cb.editMessage({
-          text: devPanelText(),
+          text: startupMessageText(),
           replyMarkup: devPanelKeyboard(),
         });
         break;
@@ -384,7 +390,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
 
         await cb.answer({});
         globalState.devUserMode = true;
-        const modeNote = globalState.testMode ? " (🧪 test mode)" : "";
+        const modeNote = globalState.testMode ? " (🧪 UI test)" : "";
         await cb.editMessage({
           text: `👤 User mode active${modeNote}. Send your funnel message.`,
         });
@@ -422,7 +428,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       case "back": {
         await cb.answer({});
         await cb.editMessage({
-          text: devPanelText(),
+          text: startupMessageText(),
           replyMarkup: devPanelKeyboard(),
         });
         break;

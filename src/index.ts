@@ -1,9 +1,9 @@
 import "dotenv/config";
-import { TelegramClient, BotKeyboard } from "@mtcute/node";
+import { TelegramClient } from "@mtcute/node";
 import { Dispatcher } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerBotHandlers } from "./router.js";
-import { devPanelKeyboard } from "./handlers/onDevPanel.js";
+import { devPanelKeyboard, startupMessageText, shutdownMessageText } from "./handlers/onDevPanel.js";
 import { initFeedbackDb } from "./db/feedback.js";
 import { initRuntimeConfig, seedAdminUserIds } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
@@ -79,17 +79,29 @@ async function main() {
     ],
   });
 
-  const panel = devPanelKeyboard();
-  const startupKeyboard = BotKeyboard.inline([
-    ...panel.buttons,
-    [BotKeyboard.url("🖥 Shelley", "https://banner-bot.shelley.exe.xyz")],
-  ]);
+  const startupKeyboard = devPanelKeyboard();
 
   await tg.sendText(
     DEV_TG_ID,
-    `🟢 Bot started\n\n@${self.username ?? self.displayName}\nNode ${process.version}\nPID: ${process.pid}\n${new Date().toISOString()}`,
+    startupMessageText(),
     { replyMarkup: startupKeyboard },
   );
+
+  // Shutdown handler — send message to dev before exit
+  let shuttingDown = false;
+  const onShutdown = async (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log(`Received ${signal}, shutting down...`);
+    try {
+      await tg.sendText(DEV_TG_ID, shutdownMessageText());
+    } catch {
+      // best-effort
+    }
+    setTimeout(() => process.exit(0), 500);
+  };
+  process.on("SIGINT", () => onShutdown("SIGINT"));
+  process.on("SIGTERM", () => onShutdown("SIGTERM"));
 }
 
 main().catch((err) => {
