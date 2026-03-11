@@ -122,9 +122,16 @@ interface ChainStep {
   model: string;
   elapsed: number;
   error?: string;
+  input?: string;
   output?: string;
   imageBase64?: string;
   imageMime?: string;
+}
+
+interface FormatStepOptions {
+  showInput?: boolean;
+  showOutput?: boolean;
+  connector?: string;
 }
 
 // The DNA prompt — a compact seed that encodes maximum creative potential.
@@ -236,15 +243,18 @@ function plain(s: string): string {
   return md.escape(s).replace(/`/g, "'");
 }
 
-function formatChainStep(step: ChainStep, connector?: string): string {
+function formatChainStep(step: ChainStep, opts: FormatStepOptions = {}): string {
   const icon = step.error ? "❌" : "✅";
-  let line = connector ? `${connector}\n` : "";
+  let line = opts.connector ? `${opts.connector}\n` : "";
   line += `${icon} **${step.label}**  ${plain(step.model)}  ${step.elapsed}ms`;
   if (step.error) {
     line += `\n    ${plain(step.error.slice(0, 600))}`;
   }
-  if (step.output) {
-    line += `\n    → ${plain(step.output.slice(0, 300))}`;
+  if (opts.showInput && step.input) {
+    line += `\n    ← ${plain(step.input.slice(0, 200))}`;
+  }
+  if (opts.showOutput && step.output) {
+    line += `\n    → ${plain(step.output.slice(0, 200))}`;
   }
   if (step.imageBase64) {
     const kb = Math.round(step.imageBase64.length * 0.75 / 1024);
@@ -273,6 +283,7 @@ async function runHealthCheck(
     model: resolvedModels.gate,
     elapsed: Date.now() - haikuStart,
     error: haikuResult.error,
+    input: DNA_SEED,
     output: haikuResult.content,
   };
   steps.push(haikuStep);
@@ -288,6 +299,7 @@ async function runHealthCheck(
       model: resolvedModels.analyze,
       elapsed: Date.now() - sonnetStart,
       error: sonnetResult.error,
+      input: haikuResult.content,
       output: sonnetResult.content,
     };
   } else {
@@ -311,6 +323,7 @@ async function runHealthCheck(
       model: resolvedModels.image,
       elapsed: Date.now() - imageStart,
       error: imageResult.error,
+      input: sonnetStep.output,
       output: imageResult.content,
       imageBase64: imageResult.imageBase64,
       imageMime: imageResult.imageMime,
@@ -332,9 +345,9 @@ async function runHealthCheck(
 
   const lines = [
     `${statusIcon} **DNA Chain Health Check**  ${totalElapsed}ms total\n`,
-    formatChainStep(steps[0]),
-    formatChainStep(steps[1], "  ↓"),
-    formatChainStep(steps[2], "  ↓"),
+    formatChainStep(steps[0], { showInput: true }),
+    formatChainStep(steps[1], { connector: "  ↓", showInput: true, showOutput: true }),
+    formatChainStep(steps[2], { connector: "  ↓" }),
   ];
 
   const report = lines.join("\n");
