@@ -8,6 +8,12 @@ import { getAdminUserIds, addAdminUserId, removeAdminUserId } from "../runtimeCo
 
 export const startTime = Date.now();
 
+// ── Health-check regeneration state ─────────────────────────────────────
+const MAX_REGEN_IMAGES = 10;
+let healthCheckImages: Array<{ buffer: Buffer; mime: string }> = [];
+let healthCheckLastBtnMsgId: number | null = null;
+let healthCheckReport: string = "";
+
 function formatUptime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
   const days = Math.floor(totalSeconds / 86400);
@@ -263,16 +269,23 @@ function formatChainStep(step: ChainStep, opts: FormatStepOptions = {}): string 
   return line;
 }
 
-async function runHealthCheck(
-  tg: TelegramClient,
-  devTgId: number,
-): Promise<void> {
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  if (!apiKey) {
-    await tg.sendText(devTgId, "🧬 Health check\n\n❌ OPENROUTER\_API\_KEY not set");
-    return;
+function regenKeyboard(count: number) {
+  if (count >= MAX_REGEN_IMAGES) {
+    return BotKeyboard.inline([
+      [BotKeyboard.callback("← Back", "dev:back")],
+    ]);
   }
+  return BotKeyboard.inline([
+    [
+      BotKeyboard.callback(`🔄 Regenerate (${count}/${MAX_REGEN_IMAGES})`, "dev:regen"),
+      BotKeyboard.callback("← Back", "dev:back"),
+    ],
+  ]);
+}
 
+async function runDnaChain(
+  apiKey: string,
+): Promise<{ steps: ChainStep[]; report: string; imageBuffer?: Buffer; imageMime?: string }> {
   const steps: ChainStep[] = [];
 
   // ── Step 1: Haiku — the DNA seed ──────────────────────────────────────
@@ -352,22 +365,111 @@ async function runHealthCheck(
 
   const report = lines.join("\n");
 
-  // Send with image if available
+  let imageBuffer: Buffer | undefined;
+  let imageMime: string | undefined;
   if (imageStep.imageBase64 && imageStep.imageMime) {
+    imageBuffer = Buffer.from(imageStep.imageBase64, "base64");
+    imageMime = imageStep.imageMime;
+  }
+
+  return { steps, report, imageBuffer, imageMime };
+}
+
+async function runHealthCheck(
+  tg: TelegramClient,
+  devTgId: number,
+): Promise<void> {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    await tg.sendText(devTgId, "🧬 Health check\n\n❌ OPENROUTER\_API\_KEY not set");
+    return;
+  }
+
+  // Reset regeneration state for a fresh health check
+  healthCheckImages = [];
+  healthCheckLastBtnMsgId = null;
+  healthCheckReport = "";
+
+  const { report, imageBuffer, imageMime } = await runDnaChain(apiKey);
+  healthCheckReport = report;
+
+  // Send with image if available
+  if (imageBuffer && imageMime) {
+    healthCheckImages.push({ buffer: imageBuffer, mime: imageMime });
     try {
-      const buf = Buffer.from(imageStep.imageBase64, "base64");
-      const ext = imageStep.imageMime.split("/")[1] || "png";
-      await tg.sendMedia(
+      const ext = imageMime.split("/")[1] || "png";
+      const sent = await tg.sendMedia(
         devTgId,
-        InputMedia.photo(new Uint8Array(buf), { fileName: `dna-healthcheck.${ext}` }),
-        { caption: md(report) },
+        InputMedia.photo(new Uint8Array(imageBuffer), { fileName: `dna-healthcheck.${ext}` }),
+        {
+          caption: md(report),
+          replyMarkup: regenKeyboard(healthCheckImages.length),
+        },
       );
+      healthCheckLastBtnMsgId = sent.id;
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
       await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`));
     }
   } else {
     await tg.sendText(devTgId, md(report));
+  }
+}
+
+async function runHealthCheckRegen(
+  tg: TelegramClient,
+  cb: CallbackQueryContext,
+  devTgId: number,
+): Promise<void> {
+  if (healthCheckImages.length >= MAX_REGEN_IMAGES) {
+    await cb.answer({ text: `Max ${MAX_REGEN_IMAGES} images reached` });
+    return;
+  }
+
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    await cb.answer({ text: "No API key" });
+    return;
+  }
+
+  await cb.answer({ text: "Regenerating..." });
+
+  // Remove button from previous message
+  if (healthCheckLastBtnMsgId) {
+    try {
+      await cb.editMessage({ replyMarkup: BotKeyboard.inline([]) });
+    } catch {
+      // ignore — message may have been deleted
+    }
+    healthCheckLastBtnMsgId = null;
+  }
+
+  const { report, imageBuffer, imageMime } = await runDnaChain(apiKey);
+  healthCheckReport = report;
+
+  if (imageBuffer && imageMime) {
+    healthCheckImages.push({ buffer: imageBuffer, mime: imageMime });
+    try {
+      const ext = imageMime.split("/")[1] || "png";
+      const sent = await tg.sendMedia(
+        devTgId,
+        InputMedia.photo(new Uint8Array(imageBuffer), { fileName: `dna-healthcheck-${healthCheckImages.length}.${ext}` }),
+        {
+          caption: md(report),
+          replyMarkup: regenKeyboard(healthCheckImages.length),
+        },
+      );
+      healthCheckLastBtnMsgId = sent.id;
+    } catch (e) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`));
+    }
+  } else {
+    // No image produced — send text report with button
+    const sent = await tg.sendText(devTgId, md(report), {
+      replyMarkup: regenKeyboard(healthCheckImages.length),
+    });
+    healthCheckLastBtnMsgId = sent.id;
   }
 }
 
@@ -423,6 +525,11 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       case "modeltest": {
         await cb.answer({ text: "Running model tests..." });
         await runHealthCheck(tg, devTgId);
+        break;
+      }
+
+      case "regen": {
+        await runHealthCheckRegen(tg, cb, devTgId);
         break;
       }
 
