@@ -59,7 +59,7 @@ export function devPanelKeyboard() {
   const mockLabel = globalState.testMode ? "UX Mock: ON" : "UX Mock";
   const rows = [
     [
-      BotKeyboard.callback("Test: LLM", "dev:modeltest"),
+      BotKeyboard.callback("LLM Test", "dev:modeltest"),
       BotKeyboard.callback(mockLabel, "dev:uitest"),
       BotKeyboard.callback("UAT", "dev:usermode"),
     ],
