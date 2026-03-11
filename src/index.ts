@@ -7,6 +7,7 @@ import { devPanelKeyboard, startupMessageText, shutdownMessageText } from "./han
 import { initFeedbackDb } from "./db/feedback.js";
 import { initRuntimeConfig, seedAdminUserIds } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
+import { startupSmokeTest } from "./startupSmokeTest.js";
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const API_ID = Number(process.env.API_ID);
@@ -86,6 +87,11 @@ async function main() {
     startupMessageText(),
     { replyMarkup: startupKeyboard },
   );
+
+  // Run startup smoke test (non-blocking)
+  startupSmokeTest(tg, DEV_TG_ID).catch((err) => {
+    devAlert("startupSmokeTest / unhandled", err);
+  });
 
   // Shutdown handler — send message to dev before exit
   let shuttingDown = false;

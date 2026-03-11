@@ -104,7 +104,7 @@ export async function generateImage(
       const data = await fetchOpenRouter({
         body: {
           model: resolvedModels.image,
-          max_tokens: 1,
+          modalities: ["image", "text"],
           messages: [{ role: "user", content: contentBlocks }],
           image_config: { aspect_ratio: "16:9" },
         },
