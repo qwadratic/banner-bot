@@ -56,14 +56,14 @@ export function startupMessageText(): string {
 }
 
 export function devPanelKeyboard() {
-  const testLabel = globalState.testMode ? "🧪 UI Test: ON" : "🧪 UI Test: OFF";
+  const mockLabel = globalState.testMode ? "UX Mock: ON" : "UX Mock";
   const rows = [
     [
-      BotKeyboard.callback("🔬 Model Test", "dev:modeltest"),
-      BotKeyboard.callback("👤 Enter User Mode", "dev:usermode"),
+      BotKeyboard.callback("Test: LLM", "dev:modeltest"),
+      BotKeyboard.callback(mockLabel, "dev:uitest"),
+      BotKeyboard.callback("UAT", "dev:usermode"),
     ],
     [
-      BotKeyboard.callback(testLabel, "dev:uitest"),
       BotKeyboard.callback("📊 Sessions", "dev:sessions"),
     ],
     [
