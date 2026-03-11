@@ -176,15 +176,18 @@ async function callModel(
   maxTokens: number,
   apiKey: string,
   timeoutMs: number = 30_000,
+  modalities?: string[],
 ): Promise<{ content?: string; imageBase64?: string; imageMime?: string; error?: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
+    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: prompt }], max_tokens: maxTokens };
+    if (modalities) body.modalities = modalities;
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: [{ role: "user", content: prompt }], max_tokens: maxTokens }),
+      body: JSON.stringify(body),
       signal: ctrl.signal,
     });
     clearTimeout(timer);
@@ -317,7 +320,7 @@ async function runHealthCheck(
   if (sonnetStep.output) {
     const imagePrompt = NANO_BANANA_MANIFEST.replace("{sonnet_output}", sonnetStep.output);
     const imageStart = Date.now();
-    const imageResult = await callModel(resolvedModels.image, imagePrompt, 1000, apiKey, 60_000);
+    const imageResult = await callModel(resolvedModels.image, imagePrompt, 1000, apiKey, 60_000, ["image", "text"]);
     imageStep = {
       label: "Manifest · Nano Banana",
       model: resolvedModels.image,
