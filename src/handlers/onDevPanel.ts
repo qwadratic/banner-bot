@@ -60,17 +60,17 @@ export function devPanelKeyboard() {
   const rows = [
     [
       BotKeyboard.callback("🔬 Model Test", "dev:modeltest"),
+      BotKeyboard.callback("👤 Enter User Mode", "dev:usermode"),
+    ],
+    [
       BotKeyboard.callback(testLabel, "dev:uitest"),
-    ],
-    [
       BotKeyboard.callback("📊 Sessions", "dev:sessions"),
-      BotKeyboard.callback("⚙️ Config", "cfg:main"),
     ],
     [
+      BotKeyboard.callback("⚙️ Config", "cfg:main"),
       BotKeyboard.callback("⬇️ Update", "dev:update"),
-      BotKeyboard.callback("🔄 Reboot", "dev:restart"),
     ],
-    [BotKeyboard.callback("👤 Enter User Mode", "dev:usermode")],
+    [BotKeyboard.callback("🔄 Reboot", "dev:restart")],
   ];
 
   return BotKeyboard.inline(rows);
