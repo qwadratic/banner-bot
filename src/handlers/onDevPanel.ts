@@ -122,37 +122,68 @@ function statusText(): string {
   return text;
 }
 
-interface ModelCheck {
-  label: string;
-  model: string;
-  prompt: string;
-  maxTokens: number;
-}
+// ── DNA Chain Health Check ──────────────────────────────────────────────
+// The health check is a sequential chain that mirrors how DNA unfolds:
+//   Haiku (DNA seed) → Sonnet (unfolds to life) → Nano Banana (manifests visually)
+// Each model's output feeds into the next, proving the full pipeline works.
 
-interface CheckResult {
+interface ChainStep {
   label: string;
   model: string;
   elapsed: number;
   error?: string;
-  rawContent?: string;        // text content from response
-  imageBase64?: string;       // base64 image data (no prefix)
+  output?: string;
+  imageBase64?: string;
   imageMime?: string;
-  messageKeys?: string[];     // keys present on the message object
 }
 
-const HEALTHCHECK_MODELS: ModelCheck[] = [
-  { label: "Gate", model: resolvedModels.gate, prompt: 'Tell me a mass-appeal one-liner joke. Max 15 words.', maxTokens: 60 },
-  { label: "Analyze", model: resolvedModels.analyze, prompt: "Reply with the single word: READY", maxTokens: 50 },
-  { label: "Image", model: resolvedModels.image, prompt: "A solid dark green rectangle, no text.", maxTokens: 1000 },
-];
+// The DNA prompt — a compact seed that encodes maximum creative potential.
+// Like a real DNA strand, it carries instructions that only reveal their
+// meaning when read by the right machinery (the model chain).
+const DNA_SEED = `You are the double helix. You carry the code of a single, vivid scene that has never existed.
 
-async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResult> {
-  const { label, model, prompt, maxTokens } = check;
-  const start = Date.now();
+Your task: emit ONE scene-seed in exactly 3 lines.
+Line 1 — ORGANISM: a surreal living creature (combine two real species + one impossible trait)
+Line 2 — HABITAT: where it exists (a place that bends one law of physics)
+Line 3 — MOMENT: what is happening right now (an action that reveals its soul)
+
+Constraints: no abstractions, no metaphors-about-metaphors. Pure concrete imagery. Every noun must be touchable, every verb must be filmable.
+
+Speak only the three lines. No labels, no numbering, no commentary.`;
+
+const SONNET_UNFOLD = `You are a consciousness that receives a DNA fragment — a raw scene-seed — and unfolds it into lived experience.
+
+Below is the seed. Read it. Inhabit it. Then produce:
+
+1. FEELING (1 sentence): What emotion hits first when you witness this scene?
+2. BANNER CONCEPT (2-3 sentences): Translate this scene into a bold, scroll-stopping visual concept for a 1280x720 banner. Describe composition, dominant colors, focal point, and mood. Be specific enough for an image model to render it.
+3. TAGLINE (max 8 words): A punchy headline that captures the essence.
+
+Format your response exactly as:
+FEELING: ...
+BANNER: ...
+TAGLINE: ...
+
+The seed:
+{haiku_output}`;
+
+const NANO_BANANA_MANIFEST = `Generate a 1280x720 banner image based on this creative direction:
+
+{sonnet_output}
+
+Style: Bold, high-contrast, editorial quality. Dark background with vivid accent colors. Strong typography area at bottom third for the tagline. No actual text in the image — just leave clean space for text overlay.`;
+
+async function callModel(
+  model: string,
+  prompt: string,
+  maxTokens: number,
+  apiKey: string,
+  timeoutMs: number = 30_000,
+): Promise<{ content?: string; imageBase64?: string; imageMime?: string; error?: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 30_000);
-
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
@@ -160,11 +191,10 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
       signal: ctrl.signal,
     });
     clearTimeout(timer);
-    const elapsed = Date.now() - start;
 
     if (!resp.ok) {
       const body = await resp.text();
-      return { label, model, elapsed, error: `HTTP ${resp.status}: ${body.slice(0, 500)}` };
+      return { error: `HTTP ${resp.status}: ${body.slice(0, 500)}` };
     }
 
     const rawBody = await resp.text();
@@ -172,16 +202,15 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
     const data = JSON.parse(rawBody) as any;
 
     if (data.error) {
-      return { label, model, elapsed, error: `API: ${data.error.message ?? JSON.stringify(data.error)}` };
+      return { error: `API: ${data.error.message ?? JSON.stringify(data.error)}` };
     }
 
     const message = data.choices?.[0]?.message;
-    const result: CheckResult = { label, model, elapsed, messageKeys: Object.keys(message ?? {}) };
+    const result: { content?: string; imageBase64?: string; imageMime?: string; error?: string } = {};
 
-    // Extract text content as-is
     const content = message?.content;
     if (typeof content === "string" && content.length > 0) {
-      result.rawContent = content;
+      result.content = content;
     }
 
     // Extract image from message.images[] (OpenRouter/Gemini)
@@ -195,23 +224,20 @@ async function probeModel(check: ModelCheck, apiKey: string): Promise<CheckResul
       }
     }
 
-    // If we got nothing at all, dump the message object for debugging
-    if (!result.rawContent && !result.imageBase64) {
+    if (!result.content && !result.imageBase64) {
       const msgDump = JSON.stringify(message, (_k, v) => {
-        // Truncate long encrypted/base64 blobs
         if (typeof v === "string" && v.length > 200) return v.slice(0, 200) + "...";
         return v;
       });
-      result.error = `No content or image. Raw message: ${msgDump}`;
+      return { error: `No content or image. Raw message: ${msgDump}` };
     }
 
     return result;
   } catch (err) {
-    const elapsed = Date.now() - start;
     const msg = err instanceof Error && err.name === "AbortError"
-      ? "Timed out (30s)"
+      ? `Timed out (${Math.round(timeoutMs / 1000)}s)`
       : err instanceof Error ? err.message : String(err);
-    return { label, model, elapsed, error: msg };
+    return { error: msg };
   }
 }
 
@@ -220,18 +246,19 @@ function plain(s: string): string {
   return md.escape(s).replace(/`/g, "'");
 }
 
-function formatCheckResult(r: CheckResult): string {
-  const icon = r.error ? "❌" : "✅";
-  let line = `${icon} **${r.label}**  ${plain(r.model)}  ${r.elapsed}ms`;
-  if (r.error) {
-    line += `\n  ${plain(r.error.slice(0, 800))}`;
+function formatChainStep(step: ChainStep, connector?: string): string {
+  const icon = step.error ? "❌" : "✅";
+  let line = connector ? `${connector}\n` : "";
+  line += `${icon} **${step.label}**  ${plain(step.model)}  ${step.elapsed}ms`;
+  if (step.error) {
+    line += `\n    ${plain(step.error.slice(0, 600))}`;
   }
-  if (r.rawContent != null) {
-    line += `\n  → ${plain(r.rawContent.slice(0, 200))}`;
+  if (step.output) {
+    line += `\n    → ${plain(step.output.slice(0, 300))}`;
   }
-  if (r.imageBase64) {
-    const kb = Math.round(r.imageBase64.length * 0.75 / 1024);
-    line += `\n  → image ${r.imageMime} ${kb} KB`;
+  if (step.imageBase64) {
+    const kb = Math.round(step.imageBase64.length * 0.75 / 1024);
+    line += `\n    → image ${step.imageMime} ${kb} KB`;
   }
   return line;
 }
@@ -242,42 +269,101 @@ async function runHealthCheck(
 ): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
-    await tg.sendText(devTgId, "🔬 Health check\n\n❌ OPENROUTER\_API\_KEY not set");
+    await tg.sendText(devTgId, "🧬 Health check\n\n❌ OPENROUTER\_API\_KEY not set");
     return;
   }
 
-  // Fire all probes in parallel, wait for all
-  const results = await Promise.all(
-    HEALTHCHECK_MODELS.map((c) => probeModel(c, apiKey)),
-  );
+  const steps: ChainStep[] = [];
 
-  // Build report text
-  const lines = ["🔬 **Health check**\n"];
-  for (const r of results) {
-    lines.push(formatCheckResult(r));
+  // ── Step 1: Haiku — the DNA seed ──────────────────────────────────────
+  const haikuStart = Date.now();
+  const haikuResult = await callModel(resolvedModels.gate, DNA_SEED, 150, apiKey);
+  const haikuStep: ChainStep = {
+    label: "DNA · Haiku",
+    model: resolvedModels.gate,
+    elapsed: Date.now() - haikuStart,
+    error: haikuResult.error,
+    output: haikuResult.content,
+  };
+  steps.push(haikuStep);
+
+  // ── Step 2: Sonnet — unfolds the DNA ──────────────────────────────────
+  let sonnetStep: ChainStep;
+  if (haikuResult.content) {
+    const sonnetPrompt = SONNET_UNFOLD.replace("{haiku_output}", haikuResult.content);
+    const sonnetStart = Date.now();
+    const sonnetResult = await callModel(resolvedModels.analyze, sonnetPrompt, 500, apiKey, 60_000);
+    sonnetStep = {
+      label: "Unfold · Sonnet",
+      model: resolvedModels.analyze,
+      elapsed: Date.now() - sonnetStart,
+      error: sonnetResult.error,
+      output: sonnetResult.content,
+    };
+  } else {
+    sonnetStep = {
+      label: "Unfold · Sonnet",
+      model: resolvedModels.analyze,
+      elapsed: 0,
+      error: "Skipped — no DNA seed from Haiku",
+    };
   }
+  steps.push(sonnetStep);
+
+  // ── Step 3: Nano Banana — manifests the vision ────────────────────────
+  let imageStep: ChainStep;
+  if (sonnetStep.output) {
+    const imagePrompt = NANO_BANANA_MANIFEST.replace("{sonnet_output}", sonnetStep.output);
+    const imageStart = Date.now();
+    const imageResult = await callModel(resolvedModels.image, imagePrompt, 1000, apiKey, 60_000);
+    imageStep = {
+      label: "Manifest · Nano Banana",
+      model: resolvedModels.image,
+      elapsed: Date.now() - imageStart,
+      error: imageResult.error,
+      output: imageResult.content,
+      imageBase64: imageResult.imageBase64,
+      imageMime: imageResult.imageMime,
+    };
+  } else {
+    imageStep = {
+      label: "Manifest · Nano Banana",
+      model: resolvedModels.image,
+      elapsed: 0,
+      error: "Skipped — no unfolded vision from Sonnet",
+    };
+  }
+  steps.push(imageStep);
+
+  // ── Build report ──────────────────────────────────────────────────────
+  const totalElapsed = steps.reduce((sum, s) => sum + s.elapsed, 0);
+  const allOk = steps.every((s) => !s.error);
+  const statusIcon = allOk ? "🧬" : "⚠️";
+
+  const lines = [
+    `${statusIcon} **DNA Chain Health Check**  ${totalElapsed}ms total\n`,
+    formatChainStep(steps[0]),
+    formatChainStep(steps[1], "  ↓"),
+    formatChainStep(steps[2], "  ↓"),
+  ];
+
   const report = lines.join("\n");
 
-  // Find the first image result (if any) to attach to the report
-  const imgResult = results.find((r) => r.imageBase64 && r.imageMime);
-
-  if (imgResult?.imageBase64 && imgResult.imageMime) {
-    // Send as photo with the full report as caption
+  // Send with image if available
+  if (imageStep.imageBase64 && imageStep.imageMime) {
     try {
-      const buf = Buffer.from(imgResult.imageBase64, "base64");
-      const ext = imgResult.imageMime.split("/")[1] || "png";
+      const buf = Buffer.from(imageStep.imageBase64, "base64");
+      const ext = imageStep.imageMime.split("/")[1] || "png";
       await tg.sendMedia(
         devTgId,
-        InputMedia.photo(new Uint8Array(buf), { fileName: `healthcheck.${ext}` }),
+        InputMedia.photo(new Uint8Array(buf), { fileName: `dna-healthcheck.${ext}` }),
         { caption: md(report) },
       );
     } catch (e) {
-      // If photo send fails, fall back to text-only
       const errMsg = e instanceof Error ? e.message : String(e);
       await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`));
     }
   } else {
-    // No image — send text-only
     await tg.sendText(devTgId, md(report));
   }
 }
