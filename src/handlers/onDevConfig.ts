@@ -792,6 +792,10 @@ export async function handleConfigInput(
       const idx = parseInt(target.slice(5), 10);
       setBannerAnnotation(idx, text);
       await tg.sendText(uid, `✅ Banner ${idx + 1} annotation updated.`);
+    } else if (target === "hc_seed") {
+      const { runHealthCheckWithSeed } = await import("./onDevPanel.js");
+      await tg.sendText(uid, `🧬 Running DNA chain with seed: "${text}"…`);
+      await runHealthCheckWithSeed(tg, uid, text);
     } else if (target.startsWith("mod_add_")) {
       const category = target.slice(8);
       const option = text.replace(/\s+/g, "_").toLowerCase();

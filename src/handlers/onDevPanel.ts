@@ -116,11 +116,19 @@ function sessionsText(): string {
 //   Haiku (DNA seed) → Sonnet (unfolds to life) → Nano Banana (manifests visually)
 // Each model's output feeds into the next, proving the full pipeline works.
 
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
 interface ChainStep {
   label: string;
   model: string;
   elapsed: number;
+  tokens?: TokenUsage;
   error?: string;
+  systemPrompt?: string;
   input?: string;
   output?: string;
   imageBase64?: string;
@@ -133,35 +141,46 @@ interface FormatStepOptions {
   connector?: string;
 }
 
-// The DNA prompt — a compact seed that encodes maximum creative potential.
-// Like a real DNA strand, it carries instructions that only reveal their
-// meaning when read by the right machinery (the model chain).
-const DNA_SEED = `You are the double helix. You carry the code of a single, vivid scene that has never existed.
+// Last health check result — stored so prompt-view buttons can retrieve it
+let lastHealthCheck: {
+  seed: string;
+  steps: ChainStep[];
+  sonnetStyle?: string;
+  reportMessageId?: number;
+  chatId?: number;
+} | null = null;
 
-Your task: emit ONE scene-seed in exactly 3 lines.
-Line 1 — ORGANISM: a surreal living creature (combine two real species + one impossible trait)
-Line 2 — HABITAT: where it exists (a place that bends one law of physics)
-Line 3 — MOMENT: what is happening right now (an action that reveals its soul)
+const DNA_SYSTEM = `You are the synthesis engine. You receive a single seed word and decompose it into a structured DNA of creative traits.
 
-Constraints: no abstractions, no metaphors-about-metaphors. Pure concrete imagery. Every noun must be touchable, every verb must be filmable.
+Your task: Given the seed word, produce exactly these traits — each on its own line in the format TRAIT: value.
+Do not explain. Do not add commentary. Just emit the traits.
 
-Speak only the three lines. No labels, no numbering, no commentary.`;
+SUBJECT: the main character or protagonist implied by the seed (a specific, vivid being — not abstract)
+OBJECT: a key object they interact with (tangible, unexpected)
+ENVIRONMENT: the world they inhabit (a specific place with atmosphere)
+ACTION: what is happening right now (concrete, filmable)
+FEELING: the dominant emotion radiating from the scene
+TEXTURE: the tactile or sensory quality of the scene (rough, silky, electric, etc.)
+TEMPO: the rhythm or pace (frenetic, glacial, pulsing, etc.)
+COLOR_MOOD: the dominant color palette and emotional temperature
+SYMBOLISM: a hidden layer of meaning beneath the surface
+TENSION: what conflict or contrast drives the scene`;
 
-const SONNET_UNFOLD = `You are a consciousness that receives a DNA fragment — a raw scene-seed — and unfolds it into lived experience.
+const SONNET_SYSTEM = `You are consciousness itself. You do not observe from outside — you ARE the scene. Every detail exists because you know it intimately, from within.
 
-Below is the seed. Read it. Inhabit it. Then produce:
+When you receive a DNA fragment (a set of creative traits), you inhabit it completely. You feel the texture, move at the tempo, see through the subject's eyes. You know everything about this story because you are the story.
 
-1. FEELING (1 sentence): What emotion hits first when you witness this scene?
-2. BANNER CONCEPT (2-3 sentences): Translate this scene into a bold, scroll-stopping visual concept for a 1280x720 banner. Describe composition, dominant colors, focal point, and mood. Be specific enough for an image model to render it.
-3. TAGLINE (max 8 words): A punchy headline that captures the essence.
+Your task:
+1. INHABIT the DNA. Bring every trait to motion — not as a list, but as lived experience. Write 2-3 sentences of pure scene narration as if you are the consciousness living it.
+2. APPLY to reality. Think: if this scene were a creative asset (banner, poster, ad) — what is its real-world goal? Who would it stop in their tracks? What product, idea, or feeling is it selling?
+3. ASSIGN STYLE: Choose one visual style that best serves the goal (e.g., "neo-brutalist editorial", "dreamy film grain", "sharp corporate minimal", "psychedelic maximalism", "muted documentary").
+4. CAPTION: Write a punchy headline (max 8 words) that captures the essence and serves the goal.
 
 Format your response exactly as:
-FEELING: ...
-BANNER: ...
-TAGLINE: ...
-
-The seed:
-{haiku_output}`;
+SCENE: ...
+GOAL: ...
+STYLE: ...
+CAPTION: ...`;
 
 const NANO_BANANA_MANIFEST = `Generate a 1280x720 banner image based on this creative direction:
 
@@ -169,19 +188,37 @@ const NANO_BANANA_MANIFEST = `Generate a 1280x720 banner image based on this cre
 
 Style: Bold, high-contrast, editorial quality. Dark background with vivid accent colors. Strong typography area at bottom third for the tagline. No actual text in the image — just leave clean space for text overlay.`;
 
-async function callModel(
-  model: string,
-  prompt: string,
-  maxTokens: number,
-  apiKey: string,
-  timeoutMs: number = 30_000,
-  modalities?: string[],
-): Promise<{ content?: string; imageBase64?: string; imageMime?: string; error?: string }> {
+const DEFAULT_SEED = "amber";
+
+interface CallModelOptions {
+  model: string;
+  userPrompt: string;
+  systemPrompt?: string;
+  maxTokens: number;
+  apiKey: string;
+  timeoutMs?: number;
+  modalities?: string[];
+}
+
+interface CallModelResult {
+  content?: string;
+  imageBase64?: string;
+  imageMime?: string;
+  tokens?: TokenUsage;
+  error?: string;
+}
+
+async function callModel(opts: CallModelOptions): Promise<CallModelResult> {
+  const { model, userPrompt, systemPrompt, maxTokens, apiKey, timeoutMs = 30_000, modalities } = opts;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
 
   try {
-    const body: Record<string, unknown> = { model, messages: [{ role: "user", content: prompt }], max_tokens: maxTokens };
+    const messages: Array<{ role: string; content: string }> = [];
+    if (systemPrompt) messages.push({ role: "system", content: systemPrompt });
+    messages.push({ role: "user", content: userPrompt });
+
+    const body: Record<string, unknown> = { model, messages, max_tokens: maxTokens };
     if (modalities) body.modalities = modalities;
     const resp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
@@ -205,7 +242,17 @@ async function callModel(
     }
 
     const message = data.choices?.[0]?.message;
-    const result: { content?: string; imageBase64?: string; imageMime?: string; error?: string } = {};
+    const result: CallModelResult = {};
+
+    // Extract token usage
+    const usage = data.usage;
+    if (usage) {
+      result.tokens = {
+        promptTokens: usage.prompt_tokens ?? 0,
+        completionTokens: usage.completion_tokens ?? 0,
+        totalTokens: usage.total_tokens ?? 0,
+      };
+    }
 
     const content = message?.content;
     if (typeof content === "string" && content.length > 0) {
@@ -248,7 +295,8 @@ function plain(s: string): string {
 function formatChainStep(step: ChainStep, opts: FormatStepOptions = {}): string {
   const icon = step.error ? "❌" : "✅";
   let line = opts.connector ? `${opts.connector}\n` : "";
-  line += `${icon} **${step.label}**  ${plain(step.model)}  ${step.elapsed}ms`;
+  const tokenInfo = step.tokens ? ` [${step.tokens.promptTokens}→${step.tokens.completionTokens}t]` : "";
+  line += `${icon} **${step.label}**  ${plain(step.model)}  ${step.elapsed}ms${tokenInfo}`;
   if (step.error) {
     line += `\n    ${plain(step.error.slice(0, 600))}`;
   }
@@ -265,9 +313,24 @@ function formatChainStep(step: ChainStep, opts: FormatStepOptions = {}): string 
   return line;
 }
 
+/** Extract STYLE: value from sonnet output */
+function extractStyle(sonnetOutput: string): string {
+  const match = sonnetOutput.match(/STYLE:\s*(.+)/i);
+  return match ? match[1].trim() : "unknown";
+}
+
+export async function runHealthCheckWithSeed(
+  tg: TelegramClient,
+  devTgId: number,
+  seed: string,
+): Promise<void> {
+  return runHealthCheck(tg, devTgId, seed);
+}
+
 async function runHealthCheck(
   tg: TelegramClient,
   devTgId: number,
+  seed?: string,
 ): Promise<void> {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
@@ -275,32 +338,49 @@ async function runHealthCheck(
     return;
   }
 
+  const seedWord = seed || DEFAULT_SEED;
   const steps: ChainStep[] = [];
 
-  // ── Step 1: Haiku — the DNA seed ──────────────────────────────────────
+  // ── Step 1: Haiku — DNA synthesis from seed ───────────────────────────
   const haikuStart = Date.now();
-  const haikuResult = await callModel(resolvedModels.seed, DNA_SEED, 150, apiKey);
+  const haikuResult = await callModel({
+    model: resolvedModels.seed,
+    systemPrompt: DNA_SYSTEM,
+    userPrompt: seedWord,
+    maxTokens: 300,
+    apiKey,
+  });
   const haikuStep: ChainStep = {
     label: "DNA · Haiku",
     model: resolvedModels.seed,
     elapsed: Date.now() - haikuStart,
+    tokens: haikuResult.tokens,
     error: haikuResult.error,
-    input: DNA_SEED,
+    systemPrompt: DNA_SYSTEM,
+    input: seedWord,
     output: haikuResult.content,
   };
   steps.push(haikuStep);
 
-  // ── Step 2: Sonnet — unfolds the DNA ──────────────────────────────────
+  // ── Step 2: Sonnet — consciousness unfolds the DNA ────────────────────
   let sonnetStep: ChainStep;
   if (haikuResult.content) {
-    const sonnetPrompt = SONNET_UNFOLD.replace("{haiku_output}", haikuResult.content);
     const sonnetStart = Date.now();
-    const sonnetResult = await callModel(resolvedModels.analyze, sonnetPrompt, 500, apiKey, 60_000);
+    const sonnetResult = await callModel({
+      model: resolvedModels.analyze,
+      systemPrompt: SONNET_SYSTEM,
+      userPrompt: haikuResult.content,
+      maxTokens: 600,
+      apiKey,
+      timeoutMs: 60_000,
+    });
     sonnetStep = {
       label: "Unfold · Sonnet",
       model: resolvedModels.analyze,
       elapsed: Date.now() - sonnetStart,
+      tokens: sonnetResult.tokens,
       error: sonnetResult.error,
+      systemPrompt: SONNET_SYSTEM,
       input: haikuResult.content,
       output: sonnetResult.content,
     };
@@ -309,7 +389,7 @@ async function runHealthCheck(
       label: "Unfold · Sonnet",
       model: resolvedModels.analyze,
       elapsed: 0,
-      error: "Skipped — no DNA seed from Haiku",
+      error: "Skipped — no DNA from Haiku",
     };
   }
   steps.push(sonnetStep);
@@ -319,11 +399,19 @@ async function runHealthCheck(
   if (sonnetStep.output) {
     const imagePrompt = NANO_BANANA_MANIFEST.replace("{sonnet_output}", sonnetStep.output);
     const imageStart = Date.now();
-    const imageResult = await callModel(resolvedModels.image, imagePrompt, 1000, apiKey, 60_000, ["image", "text"]);
+    const imageResult = await callModel({
+      model: resolvedModels.image,
+      userPrompt: imagePrompt,
+      maxTokens: 1000,
+      apiKey,
+      timeoutMs: 60_000,
+      modalities: ["image", "text"],
+    });
     imageStep = {
       label: "Manifest · Nano Banana",
       model: resolvedModels.image,
       elapsed: Date.now() - imageStart,
+      tokens: imageResult.tokens,
       error: imageResult.error,
       input: sonnetStep.output,
       output: imageResult.content,
@@ -342,17 +430,37 @@ async function runHealthCheck(
 
   // ── Build report ──────────────────────────────────────────────────────
   const totalElapsed = steps.reduce((sum, s) => sum + s.elapsed, 0);
+  const totalTokens = steps.reduce((sum, s) => sum + (s.tokens?.totalTokens ?? 0), 0);
   const allOk = steps.every((s) => !s.error);
   const statusIcon = allOk ? "🧬" : "⚠️";
+  const sonnetStyle = sonnetStep.output ? extractStyle(sonnetStep.output) : "—";
 
   const lines = [
-    `${statusIcon} **DNA Chain Health Check**  ${totalElapsed}ms total\n`,
-    formatChainStep(steps[0], { showInput: true }),
-    formatChainStep(steps[1], { connector: "  ↓", showInput: true, showOutput: true }),
+    `${statusIcon} **DNA Chain Health Check**  ${totalElapsed}ms · ${totalTokens} tokens\n`,
+    `Seed: **${plain(seedWord)}**  Style: **${plain(sonnetStyle)}**\n`,
+    formatChainStep(steps[0]),
+    formatChainStep(steps[1], { connector: "  ↓" }),
     formatChainStep(steps[2], { connector: "  ↓" }),
   ];
 
   const report = lines.join("\n");
+
+  // Store for prompt-view buttons
+  lastHealthCheck = { seed: seedWord, steps, sonnetStyle };
+
+  const promptButtons = BotKeyboard.inline([
+    [
+      BotKeyboard.callback("📋 System", "dev:hc_sys"),
+      BotKeyboard.callback("📝 User", "dev:hc_usr"),
+    ],
+    [
+      BotKeyboard.callback("🔬 Haiku out", "dev:hc_haiku"),
+      BotKeyboard.callback("🧠 Sonnet out", "dev:hc_sonnet"),
+    ],
+    [
+      BotKeyboard.callback("📤 Send to admins", "dev:hc_admins"),
+    ],
+  ]);
 
   // Send with image if available
   if (imageStep.imageBase64 && imageStep.imageMime) {
@@ -362,14 +470,16 @@ async function runHealthCheck(
       await tg.sendMedia(
         devTgId,
         InputMedia.photo(new Uint8Array(buf), { fileName: `dna-healthcheck.${ext}` }),
-        { caption: md(report) },
+        { caption: md(report), replyMarkup: promptButtons },
       );
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
-      await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`));
+      await tg.sendText(devTgId, md(`${report}\n\n⚠️ __Failed to attach image: ${md.escape(errMsg.slice(0, 200))}__`), {
+        replyMarkup: promptButtons,
+      });
     }
   } else {
-    await tg.sendText(devTgId, md(report));
+    await tg.sendText(devTgId, md(report), { replyMarkup: promptButtons });
   }
 }
 
@@ -423,8 +533,104 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       }
 
       case "modeltest": {
-        await cb.answer({ text: "Running model tests..." });
+        await cb.answer({ text: "Send seed word (or wait for default)" });
+        globalState.devConfigAwait = { type: "text", target: "hc_seed", userId: devTgId };
+        await cb.editMessage({
+          text: `🧬 DNA Health Check\n\nSend a seed word or tap Run with default ("${DEFAULT_SEED}"):`,
+          replyMarkup: BotKeyboard.inline([
+            [BotKeyboard.callback(`▶️ Run with "${DEFAULT_SEED}"`, "dev:hc_run_default")],
+            [BotKeyboard.callback("← Back", "dev:back")],
+          ]),
+        });
+        break;
+      }
+
+      case "hc_run_default": {
+        await cb.answer({ text: "Running health check..." });
+        globalState.devConfigAwait = null;
+        await cb.editMessage({ text: `🧬 Running DNA chain with seed: "${DEFAULT_SEED}"…` });
         await runHealthCheck(tg, devTgId);
+        break;
+      }
+
+      case "hc_sys": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const haikuSys = lastHealthCheck.steps[0]?.systemPrompt ?? "—";
+        const sonnetSys = lastHealthCheck.steps[1]?.systemPrompt ?? "—";
+        await tg.sendText(devTgId, `📋 **Haiku system prompt:**\n\n${plain(haikuSys)}\n\n📋 **Sonnet system prompt:**\n\n${plain(sonnetSys)}`, { parseMode: "markdown" });
+        break;
+      }
+
+      case "hc_usr": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const haikuIn = lastHealthCheck.steps[0]?.input ?? "—";
+        const sonnetIn = lastHealthCheck.steps[1]?.input ?? "—";
+        await tg.sendText(devTgId, `📝 **Haiku user input (seed):**\n\n${plain(haikuIn)}\n\n📝 **Sonnet user input (haiku output):**\n\n${plain(sonnetIn)}`, { parseMode: "markdown" });
+        break;
+      }
+
+      case "hc_haiku": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const out = lastHealthCheck.steps[0]?.output ?? "No output";
+        await tg.sendText(devTgId, `🔬 **Haiku output (DNA traits):**\n\n${plain(out)}`, { parseMode: "markdown" });
+        break;
+      }
+
+      case "hc_sonnet": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const out = lastHealthCheck.steps[1]?.output ?? "No output";
+        await tg.sendText(devTgId, `🧠 **Sonnet output:**\n\n${plain(out)}`, { parseMode: "markdown" });
+        break;
+      }
+
+      case "hc_admins": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const adminIds = getAdminUserIds();
+        if (adminIds.length === 0) {
+          await tg.sendText(devTgId, "No admins configured. Add admins via ⚙️ Config → Admins.");
+          break;
+        }
+        const hc = lastHealthCheck;
+        const totalElapsed = hc.steps.reduce((sum, s) => sum + s.elapsed, 0);
+        const totalTok = hc.steps.reduce((sum, s) => sum + (s.tokens?.totalTokens ?? 0), 0);
+        const summary = [
+          `🧬 **DNA Health Check Result**`,
+          `Seed: **${plain(hc.seed)}**  Style: **${plain(hc.sonnetStyle ?? "—")}**`,
+          `Total: ${totalElapsed}ms · ${totalTok} tokens`,
+          ``,
+          ...hc.steps.map(s => {
+            const icon = s.error ? "❌" : "✅";
+            const tok = s.tokens ? ` [${s.tokens.totalTokens}t]` : "";
+            return `${icon} ${s.label}: ${s.elapsed}ms${tok}`;
+          }),
+        ].join("\n");
+
+        const imageStep = hc.steps[2];
+        let sent = 0;
+        for (const adminId of adminIds) {
+          try {
+            if (imageStep?.imageBase64 && imageStep.imageMime) {
+              const buf = Buffer.from(imageStep.imageBase64, "base64");
+              const ext = imageStep.imageMime.split("/")[1] || "png";
+              await tg.sendMedia(
+                adminId,
+                InputMedia.photo(new Uint8Array(buf), { fileName: `dna-healthcheck.${ext}` }),
+                { caption: md(summary) },
+              );
+            } else {
+              await tg.sendText(adminId, md(summary));
+            }
+            sent++;
+          } catch {
+            // skip unreachable admins
+          }
+        }
+        await tg.sendText(devTgId, `📤 Sent to ${sent}/${adminIds.length} admin(s).`);
         break;
       }
 
