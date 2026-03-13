@@ -413,7 +413,7 @@ async function handleTemplate(
   if (action === "edit") {
     await cb.answer({});
     globalState.devConfigAwait = { type: "text", target: "image_template", userId };
-    await tg.sendText(userId, "🎨 Send the new image prompt template.\n\nPlaceholders: {modules}, {scene}, {headline}, {secondary}");
+    await tg.sendText(userId, "🎨 Send the new image prompt template.\n\nPlaceholders: {style}, {scene}, {headline}, {secondary}");
     return;
   }
 

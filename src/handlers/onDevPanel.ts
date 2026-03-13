@@ -100,9 +100,8 @@ function sessionsText(): string {
     text += `  Session ID: ${session.sessionId.slice(0, 8)}…\n`;
     text += `  Phase: ${session.phase}\n`;
     text += `  Last activity: ${runtime} ago\n`;
-    text += `  Stage: ${session.detectedStage ?? "—"}\n`;
-    text += `  Confidence: ${session.stageConfidence ?? "—"}\n`;
-    text += `  Hints: ${session.selectedHints.stage ?? "—"} / ${session.selectedHints.style ?? "—"}\n`;
+    text += `  Seed: ${session.seedWord || "—"}\n`;
+    text += `  Style: ${session.sonnetOutput?.style ?? "—"}\n`;
     text += `  Generations: ${session.generationCount}\n`;
     text += `  Warning sent: ${session.warningSent ? "yes" : "no"}\n`;
   } else {
@@ -280,10 +279,10 @@ async function runHealthCheck(
 
   // ── Step 1: Haiku — the DNA seed ──────────────────────────────────────
   const haikuStart = Date.now();
-  const haikuResult = await callModel(resolvedModels.gate, DNA_SEED, 150, apiKey);
+  const haikuResult = await callModel(resolvedModels.seed, DNA_SEED, 150, apiKey);
   const haikuStep: ChainStep = {
     label: "DNA · Haiku",
-    model: resolvedModels.gate,
+    model: resolvedModels.seed,
     elapsed: Date.now() - haikuStart,
     error: haikuResult.error,
     input: DNA_SEED,
@@ -494,7 +493,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         globalState.devUserMode = true;
         const modeNote = globalState.testMode ? " (🧪 UI test)" : "";
         await cb.editMessage({
-          text: `👤 User mode active${modeNote}. Send your funnel message.`,
+          text: `👤 User mode active${modeNote}. Send your seed word.`,
         });
         break;
       }

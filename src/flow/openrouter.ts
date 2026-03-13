@@ -9,18 +9,31 @@ export type GateResult = {
   confidence: "high" | "medium" | "low";
 };
 
+export type ApiUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
+export type OpenRouterResult = {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data: any;
+  usage: ApiUsage;
+  durationMs: number;
+};
+
 /**
  * POST to OpenRouter with timeout. Handles HTTP errors and API-level errors.
- * Returns the parsed JSON response body.
+ * Returns parsed JSON response body along with usage stats and timing.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function fetchOpenRouter(opts: {
   body: Record<string, unknown>;
   timeoutMs: number;
-}): Promise<any> {
+}): Promise<OpenRouterResult> {
   const apiKey = process.env.OPENROUTER_API_KEY!;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
+  const start = Date.now();
 
   try {
     const resp = await fetch(OPENROUTER_URL, {
@@ -40,6 +53,7 @@ export async function fetchOpenRouter(opts: {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (await resp.json()) as any;
+    const durationMs = Date.now() - start;
 
     if (data.error) {
       throw new Error(
@@ -47,7 +61,14 @@ export async function fetchOpenRouter(opts: {
       );
     }
 
-    return data;
+    const rawUsage = data.usage ?? {};
+    const usage: ApiUsage = {
+      promptTokens: rawUsage.prompt_tokens ?? 0,
+      completionTokens: rawUsage.completion_tokens ?? 0,
+      totalTokens: rawUsage.total_tokens ?? 0,
+    };
+
+    return { data, usage, durationMs };
   } finally {
     clearTimeout(timer);
   }
