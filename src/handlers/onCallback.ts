@@ -1,18 +1,14 @@
 import { BotKeyboard, InputMedia, type TelegramClient } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
-import { getModuleOptions } from "../runtimeConfig.js";
+import { getAdminUserIds } from "../runtimeConfig.js";
 import { globalState, touchSession, createSession } from "../session.js";
-import type { Session } from "../session.js";
+import type { Session, ApiCallStats } from "../session.js";
 import { devAlert } from "../devAlert.js";
-import { analyzeMessage, reanalyzeForStage } from "../flow/analyze.js";
+import { synthesizeSeed } from "../flow/seed.js";
+import { observeSeed } from "../flow/analyze.js";
 import { assemblePrompt, generateImage } from "../flow/generate.js";
 import { saveFeedback } from "../flow/feedback.js";
-import {
-  stageStepText, stageStepKeyboard,
-  styleStepText, styleStepKeyboard,
-} from "../ui/hintSelector.js";
-import { analysisCardText, analysisCardKeyboard } from "../ui/analysisCard.js";
 
 export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContext): Promise<void> {
   const data = cb.dataStr;
@@ -32,28 +28,15 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
   touchSession(session);
 
   try {
-    // Parse callback data
     const [action, ...rest] = data.split(":");
     const value = rest.join(":");
 
     switch (action) {
-      case "hint_stage":
-        await handleHintStage(cb, session, value);
-        break;
-      case "hint_style":
-        await handleHintStyle(cb, session, value);
-        break;
-      case "hints":
-        await handleHints(tg, cb, session, value);
-        break;
       case "generate":
         await handleGenerate(tg, cb, session, value);
         break;
-      case "stage":
-        await handleStage(tg, cb, session, value);
-        break;
       case "prompt":
-        await handlePrompt(tg, cb, session);
+        await handlePrompt(tg, cb, session, value);
         break;
       case "feedback":
         await handleFeedback(tg, cb, session, value);
@@ -63,6 +46,9 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
         break;
       case "interrupt":
         await handleInterrupt(tg, cb, session, value);
+        break;
+      case "share":
+        await handleShare(tg, cb, session, value);
         break;
       default:
         await cb.answer({ text: "Unknown action" });
@@ -79,12 +65,6 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
-/**
- * Deactivate an interactive message: replace text with an action note and
- * strip the inline keyboard. Works for text messages (replaces text) and
- * media messages (updates caption). Falls back to just removing the keyboard
- * if the text edit fails.
- */
 async function deactivateMessage(cb: CallbackQueryContext, note: string): Promise<void> {
   try {
     await cb.editMessage({ text: note });
@@ -92,196 +72,108 @@ async function deactivateMessage(cb: CallbackQueryContext, note: string): Promis
     try {
       await cb.editMessage({ replyMarkup: BotKeyboard.inline([]) });
     } catch {
-      // Ignore — message may have been deleted
+      // Ignore
     }
   }
 }
 
-// ── Hint selection (two-step) ────────────────────────────────────────────
+// ── Result display helpers (exported for onMessage.ts) ──────────────────
 
-async function handleHintStage(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_STAGE") {
-    await cb.answer({});
-    return;
-  }
-
-  // Toggle: tap same to deselect
-  if (session.selectedHints.stage === value) {
-    delete session.selectedHints.stage;
-  } else {
-    session.selectedHints.stage = value;
-  }
-
-  await cb.answer({});
-  await cb.editMessage({
-    text: stageStepText(session),
-    replyMarkup: stageStepKeyboard(session),
-  });
+function formatStats(label: string, stats: ApiCallStats | null): string {
+  if (!stats) return `${label}: —`;
+  const secs = (stats.durationMs / 1000).toFixed(1);
+  return `${label}: ${secs}s (${stats.promptTokens}/${stats.completionTokens} tok)`;
 }
 
-async function handleHintStyle(cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (session.phase !== "HINT_STYLE") {
-    await cb.answer({});
-    return;
+export function buildResultCaption(session: Session): string {
+  const lines: string[] = [];
+
+  lines.push(`🧬 DNA Generation #${session.generationCount}`);
+  lines.push("");
+  lines.push(`Seed: "${session.seedWord}"`);
+
+  if (session.sonnetOutput?.style) {
+    lines.push(`Style: ${session.sonnetOutput.style}`);
   }
 
-  if (session.selectedHints.style === value) {
-    delete session.selectedHints.style;
-  } else {
-    session.selectedHints.style = value;
+  lines.push("");
+  lines.push(formatStats("⏱ Haiku", session.haikuStats));
+  lines.push(formatStats("⏱ Sonnet", session.sonnetStats));
+  lines.push(formatStats("⏱ Image", session.imageStats));
+
+  if (session.sonnetOutput?.caption) {
+    lines.push("");
+    lines.push(`"${session.sonnetOutput.caption}"`);
   }
 
-  await cb.answer({});
-  await cb.editMessage({
-    text: styleStepText(session),
-    replyMarkup: styleStepKeyboard(session),
-  });
+  return lines.join("\n");
 }
 
-async function handleHints(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "next") {
-    // Stage step → Style step
-    if (session.phase !== "HINT_STAGE") {
-      await cb.answer({});
-      return;
-    }
-    session.phase = "HINT_STYLE";
-    await cb.answer({});
-    await cb.editMessage({
-      text: styleStepText(session),
-      replyMarkup: styleStepKeyboard(session),
-    });
-  } else if (value === "skip_stage") {
-    // Skip stage, go to style step
-    if (session.phase !== "HINT_STAGE") {
-      await cb.answer({});
-      return;
-    }
-    delete session.selectedHints.stage;
-    session.phase = "HINT_STYLE";
-    await cb.answer({});
-    await cb.editMessage({
-      text: styleStepText(session),
-      replyMarkup: styleStepKeyboard(session),
-    });
-  } else if (value === "back_to_stage") {
-    // Style step → back to Stage step
-    if (session.phase !== "HINT_STYLE") {
-      await cb.answer({});
-      return;
-    }
-    session.phase = "HINT_STAGE";
-    await cb.answer({});
-    await cb.editMessage({
-      text: stageStepText(session),
-      replyMarkup: stageStepKeyboard(session),
-    });
-  } else if (value === "skip_style") {
-    // Skip style, run analysis
-    if (session.phase !== "HINT_STYLE") {
-      await cb.answer({});
-      return;
-    }
-    delete session.selectedHints.style;
-    await cb.answer({});
-    await runAnalysis(tg, cb, session);
-  } else if (value === "confirm") {
-    // Style step confirmed, run analysis
-    if (session.phase !== "HINT_STYLE") {
-      await cb.answer({});
-      return;
-    }
-    await cb.answer({});
-    await runAnalysis(tg, cb, session);
-  } else {
-    await cb.answer({});
-  }
-}
-
-// ── Analysis ─────────────────────────────────────────────────────────────
-
-async function runAnalysis(tg: TelegramClient, cb: CallbackQueryContext, session: Session): Promise<void> {
-  session.phase = "ANALYZING";
-
-  await cb.editMessage({ text: CONFIG.ui.analyzing });
-
-  try {
-    const result = await analyzeMessage(session.inputText, session.selectedHints);
-
-    session.detectedStage = result.detectedStage;
-    session.stageConfidence = result.confidence;
-    session.modelAgreesWithHint = result.modelAgreesWithHint;
-    session.disagreementReason = result.disagreementReason;
-    session.modules = result.modules;
-    session.sonnetOutput = result;
-    session.userOverrides = {};
-
-    session.generatedPrompt = assemblePrompt(result.modules, {}, result);
-    session.phase = "ANALYSIS_READY";
-
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  } catch (err) {
-    await devAlert("onCallback / runAnalysis", err, { userId: session.userId });
-    session.phase = "HINT_STYLE";
-    await cb.editMessage({
-      text: CONFIG.ui.retryError,
-      replyMarkup: styleStepKeyboard(session),
-    });
-  }
+export function resultKeyboard() {
+  return BotKeyboard.inline([
+    [
+      BotKeyboard.callback("📋 System", "prompt:system"),
+      BotKeyboard.callback("📝 User", "prompt:user"),
+    ],
+    [
+      BotKeyboard.callback("🧬 Haiku out", "prompt:haiku"),
+      BotKeyboard.callback("🔮 Sonnet out", "prompt:sonnet"),
+    ],
+    [
+      BotKeyboard.callback("📤 Send to admins", "share:admins"),
+    ],
+    [
+      BotKeyboard.callback("🔁 Повторити", "generate:same"),
+      BotKeyboard.callback("⭐ Оцінити", "feedback:start"),
+    ],
+    [BotKeyboard.callback("❌ Завершити сесію", "session:end")],
+  ]);
 }
 
 // ── Generation ───────────────────────────────────────────────────────────
 
 async function handleGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "confirm") {
-    await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
-  } else if (value === "same") {
-    await doGenerate(tg, cb, session, false, "🔁 Повторна генерація");
-  } else if (value === "variation") {
-    await doGenerate(tg, cb, session, true, "🎲 Варіація");
-  } else {
+  if (value !== "same") {
     await cb.answer({});
+    return;
   }
-}
 
-async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean, sourceNote: string): Promise<void> {
-  if (!session.modules || !session.sonnetOutput) {
+  if (!session.sonnetOutput || !session.seedWord) {
     await cb.answer({ text: "Немає даних для генерації" });
     return;
   }
 
   session.phase = "GENERATING";
   await cb.answer({});
-  await deactivateMessage(cb, sourceNote);
+  await deactivateMessage(cb, "🔁 Повторна генерація");
   await tg.sendText(session.userId, CONFIG.ui.generating);
 
   try {
-    if (variation) {
-      // Swap one random module for variation
-      const categories = Object.keys(session.modules) as Array<keyof typeof session.modules>;
-      const cat = categories[Math.floor(Math.random() * categories.length)];
-      const options = getModuleOptions()[cat] ?? [];
-      const current = (session.userOverrides[cat] ?? session.modules[cat]) as string;
-      const alternatives = options.filter((o: string) => o !== current);
-      if (alternatives.length > 0) {
-        session.userOverrides[cat] = alternatives[Math.floor(Math.random() * alternatives.length)];
-      }
-    }
+    // Re-run the full pipeline with the same seed
+    const seedResult = await synthesizeSeed(session.seedWord);
+    session.haikuDnaOutput = seedResult.dna;
+    session.haikuStats = seedResult.stats;
+    session.haikuSystemPrompt = seedResult.systemPrompt;
+    session.haikuUserPrompt = seedResult.userPrompt;
 
-    const prompt = assemblePrompt(session.modules, session.userOverrides, session.sonnetOutput);
+    const observeResult = await observeSeed(session.seedWord, seedResult.dna);
+    session.sonnetOutput = observeResult.output;
+    session.sonnetStats = observeResult.stats;
+    session.sonnetSystemPrompt = observeResult.systemPrompt;
+    session.sonnetUserPrompt = observeResult.userPrompt;
+
+    const prompt = assemblePrompt(observeResult.output);
     session.generatedPrompt = prompt;
 
-    const imageBuffer = await generateImage(prompt, session.detectedStage ?? "FOMO");
+    const genResult = await generateImage(prompt);
+    session.imageStats = genResult.stats;
     session.generationCount++;
 
     await tg.sendMedia(
       session.userId,
-      InputMedia.photo(new Uint8Array(imageBuffer), { fileName: "banner.png" }),
+      InputMedia.photo(new Uint8Array(genResult.imageBuffer), { fileName: "banner.png" }),
       {
-        caption: `🎨 Банер згенеровано  (#${session.generationCount})`,
+        caption: buildResultCaption(session),
         replyMarkup: resultKeyboard(),
       },
     );
@@ -296,100 +188,114 @@ async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session:
   }
 }
 
-function resultKeyboard() {
-  return BotKeyboard.inline([
-    [
-      BotKeyboard.callback("▸ Переглянути промпт", "prompt:show"),
-      BotKeyboard.callback("🔁 Повторити", "generate:same"),
-    ],
-    [
-      BotKeyboard.callback("🎲 Варіація", "generate:variation"),
-      BotKeyboard.callback("⭐ Оцінити", "feedback:start"),
-    ],
-    [BotKeyboard.callback("❌ Завершити сесію", "session:end")],
-  ]);
-}
-
-// ── Stage management ─────────────────────────────────────────────────────
-
-async function handleStage(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
-  if (value === "use_model") {
-    // User accepts the model's suggested stage — clear conflict state
-    session.modelAgreesWithHint = true;
-    session.disagreementReason = null;
-    session.selectedHints.stage = session.detectedStage ?? undefined;
-
-    session.phase = "ANALYSIS_READY";
-    // Re-assemble prompt with accepted stage (modules unchanged)
-    if (session.modules && session.sonnetOutput) {
-      session.generatedPrompt = assemblePrompt(session.modules, session.userOverrides, session.sonnetOutput);
-    }
-    await cb.answer({});
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  } else if (value === "keep_user") {
-    // User insists on their hint stage — re-derive modules for that stage
-    const userStage = session.selectedHints.stage;
-    if (userStage) {
-      await cb.answer({});
-      await reanalyzeWithStage(tg, cb, session, userStage);
-    } else {
-      await cb.answer({});
-    }
-  } else {
-    await cb.answer({});
-  }
-}
-
-async function reanalyzeWithStage(tg: TelegramClient, cb: CallbackQueryContext, session: Session, stage: string): Promise<void> {
-  session.phase = "ANALYZING";
-  await cb.editMessage({ text: CONFIG.ui.analyzing });
-
-  try {
-    const result = await reanalyzeForStage(session.inputText, stage, {
-      style: session.selectedHints.style,
-    });
-
-    session.detectedStage = result.detectedStage;
-    session.stageConfidence = result.confidence;
-    session.modelAgreesWithHint = true;
-    session.disagreementReason = null;
-    session.modules = result.modules;
-    session.sonnetOutput = result;
-    session.userOverrides = {};
-
-    session.generatedPrompt = assemblePrompt(result.modules, {}, result);
-    session.phase = "ANALYSIS_READY";
-
-    await cb.editMessage({
-      text: analysisCardText(session),
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  } catch (err) {
-    await devAlert("onCallback / reanalyzeWithStage", err, { userId: session.userId, stage });
-    session.phase = "ANALYSIS_READY";
-    await cb.editMessage({
-      text: CONFIG.ui.retryError,
-      replyMarkup: analysisCardKeyboard(session),
-    });
-  }
-}
-
 // ── Prompt viewing ───────────────────────────────────────────────────────
 
-async function handlePrompt(tg: TelegramClient, cb: CallbackQueryContext, session: Session): Promise<void> {
+async function handlePrompt(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
   await cb.answer({});
-  if (session.generatedPrompt) {
-    // Send as new message (spec: never edit/delete)
-    const text = session.generatedPrompt.length > 4096
-      ? session.generatedPrompt.slice(0, 4093) + "..."
-      : session.generatedPrompt;
-    await tg.sendText(session.userId, text);
-  } else {
-    await tg.sendText(session.userId, "Промпт не знайдено.");
+
+  let text: string;
+
+  switch (value) {
+    case "system": {
+      const haiku = session.haikuSystemPrompt ?? "(not available)";
+      const sonnet = session.sonnetSystemPrompt ?? "(not available)";
+      text = `📋 SYSTEM PROMPTS\n\n── Haiku (DNA Seed) ──\n${haiku}\n\n── Sonnet (Consciousness) ──\n${sonnet}`;
+      break;
+    }
+    case "user": {
+      const haiku = session.haikuUserPrompt ?? "(not available)";
+      const sonnet = session.sonnetUserPrompt ?? "(not available)";
+      text = `📝 USER PROMPTS\n\n── Haiku input ──\n${haiku}\n\n── Sonnet input ──\n${sonnet}`;
+      break;
+    }
+    case "haiku": {
+      if (session.haikuDnaOutput) {
+        const dna = session.haikuDnaOutput;
+        const lines = Object.entries(dna).map(([k, v]) => {
+          if (Array.isArray(v)) return `${k}: ${v.join(", ")}`;
+          return `${k}: ${v}`;
+        });
+        text = `🧬 HAIKU DNA OUTPUT\n\n${lines.join("\n")}`;
+      } else {
+        text = "🧬 Haiku output not available.";
+      }
+      break;
+    }
+    case "sonnet": {
+      if (session.sonnetOutput) {
+        const out = session.sonnetOutput;
+        text = `🔮 SONNET OUTPUT\n\nobservation: ${out.observation}\n\ngoal: ${out.goal}\n\nstyle: ${out.style}\n\ncaption: ${out.caption}\n\nscene: ${out.scene}\n\nheadline: ${out.headline}\n\nsecondary: ${out.secondary}`;
+      } else {
+        text = "🔮 Sonnet output not available.";
+      }
+      break;
+    }
+    default:
+      // Legacy: show generated image prompt
+      if (session.generatedPrompt) {
+        text = session.generatedPrompt;
+      } else {
+        text = "Промпт не знайдено.";
+      }
   }
+
+  // Truncate for Telegram limit
+  if (text.length > 4096) {
+    text = text.slice(0, 4093) + "...";
+  }
+
+  await tg.sendText(session.userId, text);
+}
+
+// ── Share to admins ──────────────────────────────────────────────────────
+
+async function handleShare(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
+  if (value !== "admins") {
+    await cb.answer({});
+    return;
+  }
+
+  const adminIds = getAdminUserIds();
+  const devTgId = Number(process.env.DEV_TG_ID);
+
+  // Collect all admin IDs except the current user
+  const targets = [...new Set([devTgId, ...adminIds])].filter((id) => id !== session.userId);
+
+  if (targets.length === 0) {
+    await cb.answer({ text: "Немає інших адмінів" });
+    return;
+  }
+
+  await cb.answer({ text: "📤 Надсилаю..." });
+
+  const caption = `📤 Shared by user ${session.userId}\n\n${buildResultCaption(session)}`;
+  const truncatedCaption = caption.length > 1024 ? caption.slice(0, 1021) + "..." : caption;
+
+  let sent = 0;
+  for (const targetId of targets) {
+    try {
+      // Send the result text
+      await tg.sendText(targetId, truncatedCaption);
+
+      // If we have a generated prompt, also share the haiku DNA and sonnet output
+      if (session.haikuDnaOutput) {
+        const dna = session.haikuDnaOutput;
+        const dnaLines = Object.entries(dna).map(([k, v]) => {
+          if (Array.isArray(v)) return `${k}: ${v.join(", ")}`;
+          return `${k}: ${v}`;
+        });
+        let dnaText = `🧬 DNA:\n${dnaLines.join("\n")}`;
+        if (dnaText.length > 4096) dnaText = dnaText.slice(0, 4093) + "...";
+        await tg.sendText(targetId, dnaText);
+      }
+
+      sent++;
+    } catch (err) {
+      await devAlert("share / send to admin", err, { targetId });
+    }
+  }
+
+  await tg.sendText(session.userId, `📤 Надіслано ${sent} адмін(ам).`);
 }
 
 // ── Feedback ─────────────────────────────────────────────────────────────
@@ -429,7 +335,7 @@ async function handleFeedback(tg: TelegramClient, cb: CallbackQueryContext, sess
     session.phase = "RESULT_READY";
     await cb.answer({ text: "Дякую!" });
     await cb.editMessage({
-      text: "Дякую за відгук! 🙏",
+      text: "Дякую за відгук!",
       replyMarkup: resultKeyboard(),
     });
   } else {
@@ -454,11 +360,9 @@ async function handleSession(tg: TelegramClient, cb: CallbackQueryContext, sessi
 
 async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
   if (value === "cancel") {
-    // Cancel current session, start new one with the pending text
     const pendingText = session.pendingInterruptText;
     const userId = session.userId;
 
-    // Reset session
     const newSession = createSession(userId);
     newSession.phase = "WAITING_FOR_MESSAGE";
     globalState.activeSession = newSession;
@@ -466,31 +370,60 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
     await cb.answer({});
     await cb.editMessage({ text: "Сесію скасовано." });
 
-    // Process the pending text as a new message
+    // Process the pending text as a new seed
     if (pendingText) {
-      const { classifyMessage, GateTimeoutError } = await import("../flow/gate.js");
+      const { runFullPipeline } = await import("./onMessage.js") as { runFullPipeline?: (tg: TelegramClient, userId: number, seedWord: string) => Promise<void> };
+      // Since runFullPipeline is not exported, we'll inline the logic
       try {
-        const result = await classifyMessage(pendingText);
-        if (!result.isFunnelMessage) {
-          await tg.sendText(userId, CONFIG.ui.notFunnelMsg);
-          return;
-        }
-        newSession.inputText = pendingText;
-        newSession.phase = "HINT_STAGE";
-        await tg.sendText(userId, stageStepText(newSession), {
-          replyMarkup: stageStepKeyboard(newSession),
-        });
+        newSession.seedWord = pendingText;
+        newSession.phase = "SYNTHESIZING";
+        await tg.sendText(userId, CONFIG.ui.synthesizing);
+
+        const { synthesizeSeed: synthSeed } = await import("../flow/seed.js");
+        const seedResult = await synthSeed(pendingText);
+        newSession.haikuDnaOutput = seedResult.dna;
+        newSession.haikuStats = seedResult.stats;
+        newSession.haikuSystemPrompt = seedResult.systemPrompt;
+        newSession.haikuUserPrompt = seedResult.userPrompt;
+
+        const { observeSeed: observe } = await import("../flow/analyze.js");
+        newSession.phase = "OBSERVING";
+        await tg.sendText(userId, CONFIG.ui.observing);
+
+        const observeResult = await observe(pendingText, seedResult.dna);
+        newSession.sonnetOutput = observeResult.output;
+        newSession.sonnetStats = observeResult.stats;
+        newSession.sonnetSystemPrompt = observeResult.systemPrompt;
+        newSession.sonnetUserPrompt = observeResult.userPrompt;
+
+        const { assemblePrompt: assemble, generateImage: genImage } = await import("../flow/generate.js");
+        newSession.phase = "GENERATING";
+        await tg.sendText(userId, CONFIG.ui.generating);
+
+        const prompt = assemble(observeResult.output);
+        newSession.generatedPrompt = prompt;
+
+        const genResult = await genImage(prompt);
+        newSession.imageStats = genResult.stats;
+        newSession.generationCount++;
+
+        await tg.sendMedia(
+          userId,
+          InputMedia.photo(new Uint8Array(genResult.imageBuffer), { fileName: "banner.png" }),
+          {
+            caption: buildResultCaption(newSession),
+            replyMarkup: resultKeyboard(),
+          },
+        );
+
+        newSession.phase = "RESULT_READY";
       } catch (err) {
-        await devAlert("onCallback / interrupt:cancel / gate", err, { userId });
-        if (err instanceof GateTimeoutError) {
-          await tg.sendText(userId, CONFIG.ui.timeoutError);
-        } else {
-          await tg.sendText(userId, CONFIG.ui.retryError);
-        }
+        await devAlert("onCallback / interrupt:cancel / pipeline", err, { userId });
+        await tg.sendText(userId, CONFIG.ui.retryError);
+        newSession.phase = "WAITING_FOR_MESSAGE";
       }
     }
   } else if (value === "continue") {
-    // Restore previous phase
     session.pendingInterruptText = null;
     session.phase = session.previousPhase ?? "WAITING_FOR_MESSAGE";
     session.previousPhase = null;

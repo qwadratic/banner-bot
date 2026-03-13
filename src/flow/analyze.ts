@@ -1,84 +1,51 @@
-import { MODULE_KEYS, globalState } from "../session.js";
-import type { SonnetOutput } from "../session.js";
+import { globalState } from "../session.js";
+import type { SonnetOutput, HaikuDnaOutput, ApiCallStats } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
-import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
-import { mockAnalyzeMessage, mockReanalyzeForStage } from "./mocks.js";
-import { fetchOpenRouter, withRetries, VALID_CONFIDENCES } from "./openrouter.js";
-
-const VALID_STAGES = new Set([
-  "Attention", "Identification", "Problem", "Insight",
-  "Authority", "Micro-value", "Possibility", "FOMO",
-]);
+import { getSonnetPrompt } from "../runtimeConfig.js";
+import { mockObserveSeed } from "./mocks.js";
+import { fetchOpenRouter, withRetries } from "./openrouter.js";
 
 function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
   if (typeof obj !== "object" || obj === null) return false;
   const o = obj as Record<string, unknown>;
-  if (!VALID_STAGES.has(o.detectedStage as string)) return false;
-  if (!VALID_CONFIDENCES.has(o.confidence as string)) return false;
-  if (typeof o.scene !== "string" || typeof o.headline !== "string" || typeof o.secondary !== "string") return false;
-  if (typeof o.modules !== "object" || o.modules === null) return false;
-  const mods = o.modules as Record<string, unknown>;
-  for (const key of MODULE_KEYS) {
-    if (typeof mods[key] !== "string") return false;
-  }
+  if (typeof o.observation !== "string") return false;
+  if (typeof o.goal !== "string") return false;
+  if (typeof o.style !== "string") return false;
+  if (typeof o.caption !== "string") return false;
+  if (typeof o.scene !== "string") return false;
+  if (typeof o.headline !== "string") return false;
+  if (typeof o.secondary !== "string") return false;
   return true;
 }
 
-function buildStageModuleTable(): string {
-  const defaults = getStageModuleDefaults();
-  const header = `| Stage | ${MODULE_KEYS.join(" | ")} |`;
-  const sep = `|${MODULE_KEYS.map(() => "---").concat("---").join("|")}|`;
-  const rows = Object.entries(defaults).map(([stage, mods]) => {
-    const vals = MODULE_KEYS.map((k) => mods[k] ?? "");
-    return `| ${stage} | ${vals.join(" | ")} |`;
-  });
-  return [header, sep, ...rows].join("\n");
-}
+function buildUserMessage(seedWord: string, dna: HaikuDnaOutput): string {
+  const dnaBlock = Object.entries(dna)
+    .map(([key, val]) => {
+      if (Array.isArray(val)) return `${key}: ${val.join(", ")}`;
+      return `${key}: ${val}`;
+    })
+    .join("\n");
 
-function buildModuleOptionsList(): string {
-  const opts = getModuleOptions();
-  return Object.entries(opts)
-    .map(([cat, vals]) => `${cat}: ${vals.join(", ")}`)
-    .join("\n\n");
-}
+  return `Seed word: "${seedWord}"
 
-function buildUserMessage(inputText: string, hints: { stage?: string; style?: string }): string {
-  let hintsBlock: string;
-  if (hints.stage && hints.style) {
-    hintsBlock = `User stage hint: ${hints.stage}\nUser style hint: ${hints.style}`;
-  } else if (hints.stage) {
-    hintsBlock = `User stage hint: ${hints.stage}`;
-  } else if (hints.style) {
-    hintsBlock = `User style hint: ${hints.style}`;
-  } else {
-    hintsBlock = "No hints provided. Determine stage from the message alone.";
-  }
+DNA traits synthesized from this seed:
 
-  return `Analyze the following funnel message and return a JSON object matching this schema exactly:
+${dnaBlock}
+
+Now inhabit this seed as consciousness. Observe every detail, bring it to motion, determine its real-life purpose, assign a visual style, and write a caption.
+
+Respond with a JSON object matching this schema exactly:
 
 ${CONFIG.sonnetOutputSchema}
 
-Funnel message:
-"""
-${inputText}
-"""
-
-${hintsBlock}
-
-Stage-to-module reference table (use as starting point, deviate when justified):
-
-${buildStageModuleTable()}
-
-Available module values per category:
-
-${buildModuleOptionsList()}
-
 Field instructions:
-- "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
-- "headline": Ukrainian. ALL CAPS. Max 6 words. Extracted or rewritten from the funnel message. Must be the strongest possible hook for this stage.
-- "secondary": Ukrainian. Max 10 words. Supports the headline. Calm, direct.
-- "modelAgreesWithHint": true if you agree with the stage hint, false if you disagree, null if no hint was given.
-- "disagreementReason": one sentence in English explaining why you chose a different stage. null if no disagreement.`;
+- "observation": Your consciousness's deep observation of this seed — what you see, feel, notice. 2-4 sentences.
+- "goal": How this generated visual should be used in real life — its practical purpose. 1-2 sentences.
+- "style": A specific, evocative visual style description (e.g., "cinematic noir with medical precision"). 1 sentence.
+- "caption": A poetic but purposeful caption for the image. 1-2 sentences.
+- "scene": Detailed visual scene description for the image model. Specific about composition, subject positioning, lighting, color. 2-4 sentences.
+- "headline": Ukrainian. ALL CAPS. Max 6 words. The strongest possible hook derived from this seed.
+- "secondary": Ukrainian. Max 10 words. Supports the headline.`;
 }
 
 function extractTextContent(data: { choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }> }): string {
@@ -91,17 +58,28 @@ function extractTextContent(data: { choices?: Array<{ message?: { content?: stri
   return "";
 }
 
-async function callSonnet(
-  systemPrompt: string,
-  userMessage: string,
-  context: string,
-): Promise<SonnetOutput> {
-  return withRetries({
+export type ObserveResult = {
+  output: SonnetOutput;
+  stats: ApiCallStats;
+  systemPrompt: string;
+  userPrompt: string;
+};
+
+export async function observeSeed(
+  seedWord: string,
+  dna: HaikuDnaOutput,
+): Promise<ObserveResult> {
+  if (globalState.testMode) return mockObserveSeed(seedWord, dna);
+
+  const systemPrompt = getSonnetPrompt();
+  const userMessage = buildUserMessage(seedWord, dna);
+
+  const result = await withRetries({
     attempts: CONFIG.retry.analyze.attempts,
     delayMs: CONFIG.retry.analyze.delayMs,
-    context,
+    context: "observe",
     fn: async () => {
-      const data = await fetchOpenRouter({
+      const { data, usage, durationMs } = await fetchOpenRouter({
         body: {
           model: resolvedModels.analyze,
           max_tokens: 4000,
@@ -123,28 +101,19 @@ async function callSonnet(
         throw new Error(`Invalid fields. Parsed: ${JSON.stringify(parsed).slice(0, 500)}`);
       }
 
-      return parsed;
+      return {
+        output: parsed,
+        stats: {
+          durationMs,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          totalTokens: usage.totalTokens,
+        } as ApiCallStats,
+        systemPrompt,
+        userPrompt: userMessage,
+      };
     },
   });
-}
 
-export async function analyzeMessage(
-  inputText: string,
-  hints: { stage?: string; style?: string },
-): Promise<SonnetOutput> {
-  if (globalState.testMode) return mockAnalyzeMessage(inputText, hints);
-
-  const userMessage = buildUserMessage(inputText, hints);
-  return callSonnet(getSonnetPrompt(), userMessage, "analyze");
-}
-
-export async function reanalyzeForStage(
-  inputText: string,
-  stage: string,
-  hints: { style?: string },
-): Promise<SonnetOutput> {
-  if (globalState.testMode) return mockReanalyzeForStage(inputText, stage, hints);
-
-  const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
-  return callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
+  return result;
 }

@@ -2,10 +2,8 @@ import { randomUUID } from "node:crypto";
 
 export type SessionPhase =
   | "WAITING_FOR_MESSAGE"
-  | "HINT_STAGE"
-  | "HINT_STYLE"
-  | "ANALYZING"
-  | "ANALYSIS_READY"
+  | "SYNTHESIZING"
+  | "OBSERVING"
   | "GENERATING"
   | "RESULT_READY"
   | "AWAITING_FEEDBACK_RATING"
@@ -20,16 +18,44 @@ export type ModuleKey = typeof MODULE_KEYS[number];
 
 export type ModuleSet = Record<ModuleKey, string>;
 
+// ── Haiku DNA output ────────────────────────────────────────────────────
+
+export type HaikuDnaOutput = {
+  subject: string;
+  object: string;
+  environment: string;
+  actions: string[];
+  feeling: string;
+  texture: string;
+  tempo: string;
+  color_mood: string;
+  symbolism: string;
+  tension: string;
+  transformation: string;
+};
+
+// ── Sonnet consciousness output ─────────────────────────────────────────
+
 export type SonnetOutput = {
-  detectedStage: string;
-  confidence: "high" | "medium" | "low";
-  modelAgreesWithHint: boolean | null;
-  disagreementReason: string | null;
-  modules: ModuleSet;
+  observation: string;
+  goal: string;
+  style: string;
+  caption: string;
   scene: string;
   headline: string;
   secondary: string;
 };
+
+// ── API call stats ──────────────────────────────────────────────────────
+
+export type ApiCallStats = {
+  durationMs: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
+// ── Session ─────────────────────────────────────────────────────────────
 
 export type Session = {
   userId: number;
@@ -37,23 +63,25 @@ export type Session = {
   phase: SessionPhase;
   previousPhase: SessionPhase | null;
   lastActivityAt: number;
-  inputText: string;
-  selectedHints: {
-    stage?: string;
-    style?: string;
-  };
-  detectedStage: string | null;
-  stageConfidence: "high" | "medium" | "low" | null;
-  modelAgreesWithHint: boolean | null;
-  disagreementReason: string | null;
-  modules: ModuleSet | null;
-  userOverrides: Partial<ModuleSet>;
+  seedWord: string;
+  haikuDnaOutput: HaikuDnaOutput | null;
   sonnetOutput: SonnetOutput | null;
   generatedPrompt: string | null;
   generationCount: number;
   pendingRating: number | null;
   pendingInterruptText: string | null;
   warningSent: boolean;
+
+  // Pipeline tracking — prompts sent to each model
+  haikuSystemPrompt: string | null;
+  haikuUserPrompt: string | null;
+  sonnetSystemPrompt: string | null;
+  sonnetUserPrompt: string | null;
+
+  // Pipeline tracking — stats per step
+  haikuStats: ApiCallStats | null;
+  sonnetStats: ApiCallStats | null;
+  imageStats: ApiCallStats | null;
 };
 
 export type DevConfigAwait = {
@@ -90,29 +118,25 @@ export function createSession(userId: number): Session {
     phase: "WAITING_FOR_MESSAGE",
     previousPhase: null,
     lastActivityAt: Date.now(),
-    inputText: "",
-    selectedHints: {},
-    detectedStage: null,
-    stageConfidence: null,
-    modelAgreesWithHint: null,
-    disagreementReason: null,
-    modules: null,
-    userOverrides: {},
+    seedWord: "",
+    haikuDnaOutput: null,
     sonnetOutput: null,
     generatedPrompt: null,
     generationCount: 0,
     pendingRating: null,
     pendingInterruptText: null,
     warningSent: false,
+    haikuSystemPrompt: null,
+    haikuUserPrompt: null,
+    sonnetSystemPrompt: null,
+    sonnetUserPrompt: null,
+    haikuStats: null,
+    sonnetStats: null,
+    imageStats: null,
   };
 }
 
 export function touchSession(session: Session): void {
   session.lastActivityAt = Date.now();
   session.warningSent = false;
-}
-
-export function getEffectiveModules(session: Session): ModuleSet | null {
-  if (!session.modules) return null;
-  return { ...session.modules, ...session.userOverrides };
 }
