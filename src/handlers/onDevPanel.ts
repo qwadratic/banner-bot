@@ -558,7 +558,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
         const haikuSys = lastHealthCheck.steps[0]?.systemPrompt ?? "—";
         const sonnetSys = lastHealthCheck.steps[1]?.systemPrompt ?? "—";
-        await tg.sendText(devTgId, `📋 **Haiku system prompt:**\n\n${plain(haikuSys)}\n\n📋 **Sonnet system prompt:**\n\n${plain(sonnetSys)}`, { parseMode: "markdown" });
+        await tg.sendText(devTgId, md`📋 **Haiku system prompt:**\n\n${haikuSys}\n\n📋 **Sonnet system prompt:**\n\n${sonnetSys}`);
         break;
       }
 
@@ -567,7 +567,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
         const haikuIn = lastHealthCheck.steps[0]?.input ?? "—";
         const sonnetIn = lastHealthCheck.steps[1]?.input ?? "—";
-        await tg.sendText(devTgId, `📝 **Haiku user input (seed):**\n\n${plain(haikuIn)}\n\n📝 **Sonnet user input (haiku output):**\n\n${plain(sonnetIn)}`, { parseMode: "markdown" });
+        await tg.sendText(devTgId, md`📝 **Haiku user input (seed):**\n\n${haikuIn}\n\n📝 **Sonnet user input (haiku output):**\n\n${sonnetIn}`);
         break;
       }
 
@@ -575,7 +575,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         await cb.answer({});
         if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
         const out = lastHealthCheck.steps[0]?.output ?? "No output";
-        await tg.sendText(devTgId, `🔬 **Haiku output (DNA traits):**\n\n${plain(out)}`, { parseMode: "markdown" });
+        await tg.sendText(devTgId, md`🔬 **Haiku output (DNA traits):**\n\n${out}`);
         break;
       }
 
@@ -583,7 +583,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         await cb.answer({});
         if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
         const out = lastHealthCheck.steps[1]?.output ?? "No output";
-        await tg.sendText(devTgId, `🧠 **Sonnet output:**\n\n${plain(out)}`, { parseMode: "markdown" });
+        await tg.sendText(devTgId, md`🧠 **Sonnet output:**\n\n${out}`);
         break;
       }
 
