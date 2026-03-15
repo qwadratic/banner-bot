@@ -100,8 +100,9 @@ function sessionsText(): string {
     text += `  Session ID: ${session.sessionId.slice(0, 8)}…\n`;
     text += `  Phase: ${session.phase}\n`;
     text += `  Last activity: ${runtime} ago\n`;
-    text += `  Seed: ${session.seedWord || "—"}\n`;
-    text += `  Style: ${session.sonnetOutput?.style ?? "—"}\n`;
+    text += `  Stage: ${session.detectedStage ?? "—"}\n`;
+    text += `  Confidence: ${session.stageConfidence ?? "—"}\n`;
+    text += `  Hints: ${session.selectedHints.stage ?? "—"} / ${session.selectedHints.style ?? "—"}\n`;
     text += `  Generations: ${session.generationCount}\n`;
     text += `  Warning sent: ${session.warningSent ? "yes" : "no"}\n`;
   } else {
@@ -344,7 +345,7 @@ async function runHealthCheck(
   // ── Step 1: Haiku — DNA synthesis from seed ───────────────────────────
   const haikuStart = Date.now();
   const haikuResult = await callModel({
-    model: resolvedModels.seed,
+    model: resolvedModels.gate,
     systemPrompt: DNA_SYSTEM,
     userPrompt: seedWord,
     maxTokens: 300,
@@ -352,7 +353,7 @@ async function runHealthCheck(
   });
   const haikuStep: ChainStep = {
     label: "DNA · Haiku",
-    model: resolvedModels.seed,
+    model: resolvedModels.gate,
     elapsed: Date.now() - haikuStart,
     tokens: haikuResult.tokens,
     error: haikuResult.error,
@@ -456,6 +457,9 @@ async function runHealthCheck(
     [
       BotKeyboard.callback("🔬 Haiku out", "dev:hc_haiku"),
       BotKeyboard.callback("🧠 Sonnet out", "dev:hc_sonnet"),
+    ],
+    [
+      BotKeyboard.callback("📤 Send to admins", "dev:hc_admins"),
     ],
   ]);
 
@@ -584,6 +588,53 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
+      case "hc_admins": {
+        await cb.answer({});
+        if (!lastHealthCheck) { await tg.sendText(devTgId, "No health check data."); break; }
+        const adminIds = getAdminUserIds();
+        if (adminIds.length === 0) {
+          await tg.sendText(devTgId, "No admins configured. Add admins via ⚙️ Config → Admins.");
+          break;
+        }
+        const hc = lastHealthCheck;
+        const totalElapsed = hc.steps.reduce((sum, s) => sum + s.elapsed, 0);
+        const totalTok = hc.steps.reduce((sum, s) => sum + (s.tokens?.totalTokens ?? 0), 0);
+        const summary = [
+          `🧬 **DNA Health Check Result**`,
+          `Seed: **${plain(hc.seed)}**  Style: **${plain(hc.sonnetStyle ?? "—")}**`,
+          `Total: ${totalElapsed}ms · ${totalTok} tokens`,
+          ``,
+          ...hc.steps.map(s => {
+            const icon = s.error ? "❌" : "✅";
+            const tok = s.tokens ? ` [${s.tokens.totalTokens}t]` : "";
+            return `${icon} ${s.label}: ${s.elapsed}ms${tok}`;
+          }),
+        ].join("\n");
+
+        const imageStep = hc.steps[2];
+        let sent = 0;
+        for (const adminId of adminIds) {
+          try {
+            if (imageStep?.imageBase64 && imageStep.imageMime) {
+              const buf = Buffer.from(imageStep.imageBase64, "base64");
+              const ext = imageStep.imageMime.split("/")[1] || "png";
+              await tg.sendMedia(
+                adminId,
+                InputMedia.photo(new Uint8Array(buf), { fileName: `dna-healthcheck.${ext}` }),
+                { caption: md(summary) },
+              );
+            } else {
+              await tg.sendText(adminId, md(summary));
+            }
+            sent++;
+          } catch {
+            // skip unreachable admins
+          }
+        }
+        await tg.sendText(devTgId, `📤 Sent to ${sent}/${adminIds.length} admin(s).`);
+        break;
+      }
+
       case "restart": {
         await cb.answer({});
         await cb.editMessage({ text: "🔄 Restarting..." });
@@ -649,7 +700,7 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         globalState.devUserMode = true;
         const modeNote = globalState.testMode ? " (🧪 UI test)" : "";
         await cb.editMessage({
-          text: `👤 User mode active${modeNote}. Send your seed word.`,
+          text: `👤 User mode active${modeNote}. Send your funnel message.`,
         });
         break;
       }
