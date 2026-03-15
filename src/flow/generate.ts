@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SonnetOutput, ApiCallStats } from "../session.js";
+import type { ModuleSet, SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
 import { getImageTemplate, getDoctorPortrait, getBannerStyles } from "../runtimeConfig.js";
 import { devAlert } from "../devAlert.js";
@@ -20,18 +20,34 @@ interface ReferenceAsset {
   base64?: string;
 }
 
-export function assemblePrompt(sonnetOutput: SonnetOutput): string {
+export function assemblePrompt(
+  modules: ModuleSet,
+  userOverrides: Partial<ModuleSet>,
+  sonnetOutput: SonnetOutput,
+): string {
+  const effective = { ...modules, ...userOverrides };
+  const modulesBlock = Object.entries(effective)
+    .map(([k, v]) => `${k} = ${v}`)
+    .join("\n");
+
   return getImageTemplate()
-    .replace("{style}", sonnetOutput.style)
+    .replace("{modules}", modulesBlock)
     .replace("{scene}", sonnetOutput.scene)
     .replace("{headline}", sonnetOutput.headline)
     .replace("{secondary}", sonnetOutput.secondary);
 }
 
-async function loadReferenceAssets(): Promise<ReferenceAsset[]> {
+async function loadReferenceAssets(detectedStage: string): Promise<ReferenceAsset[]> {
   const refs: ReferenceAsset[] = [
     ...getBannerStyles().filter((r) => r.path !== null),
   ];
+
+  if ((CONFIG.stagesWithDoctor as readonly string[]).includes(detectedStage)) {
+    const doc = getDoctorPortrait();
+    if (doc.path) {
+      refs.unshift(doc);
+    }
+  }
 
   const loaded: ReferenceAsset[] = [];
   for (const ref of refs) {
@@ -51,17 +67,13 @@ async function loadReferenceAssets(): Promise<ReferenceAsset[]> {
   return loaded;
 }
 
-export type GenerateResult = {
-  imageBuffer: Buffer;
-  stats: ApiCallStats;
-};
-
 export async function generateImage(
   prompt: string,
-): Promise<GenerateResult> {
-  if (globalState.testMode) return mockGenerateImage(prompt);
+  detectedStage: string,
+): Promise<Buffer> {
+  if (globalState.testMode) return mockGenerateImage(prompt, detectedStage);
 
-  const loadedRefs = await loadReferenceAssets();
+  const loadedRefs = await loadReferenceAssets(detectedStage);
 
   // Assemble multimodal content blocks
   const contentBlocks: Array<
@@ -87,8 +99,9 @@ export async function generateImage(
     attempts: CONFIG.retry.imageGen.attempts,
     delayMs: CONFIG.retry.imageGen.delayMs,
     context: "generate",
+    meta: { detectedStage },
     fn: async () => {
-      const { data, usage, durationMs } = await fetchOpenRouter({
+      const data = await fetchOpenRouter({
         body: {
           model: resolvedModels.image,
           modalities: ["image", "text"],
@@ -128,15 +141,7 @@ export async function generateImage(
         throw new Error(`No image in response. Raw message: ${msgDump?.slice(0, 500)}`);
       }
 
-      return {
-        imageBuffer: Buffer.from(imageBase64, "base64"),
-        stats: {
-          durationMs,
-          promptTokens: usage.promptTokens,
-          completionTokens: usage.completionTokens,
-          totalTokens: usage.totalTokens,
-        },
-      };
+      return Buffer.from(imageBase64, "base64");
     },
   });
 }
