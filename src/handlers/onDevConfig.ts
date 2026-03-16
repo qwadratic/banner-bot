@@ -12,6 +12,7 @@ import {
   setHaikuPrompt, setSonnetPrompt, setImageTemplate,
   setDoctorPortrait, setDoctorAnnotation, deleteDoctorPortrait,
   setBannerStyle, setBannerAnnotation, deleteBannerStyle,
+  addBannerSlot, removeBannerSlot,
   setStageModuleDefault, addModuleOption, removeModuleOption,
   resetField, hasOverride,
   addAdminUserId,
@@ -127,6 +128,7 @@ async function showPhotos(cb: CallbackQueryContext): Promise<void> {
   styles.forEach((s, i) => {
     text += `Banner ${i + 1}: ${s.path || "(empty)"}\n`;
   });
+  text += `\n${styles.length}/${CONFIG.maxBannerReferences} banner slots used`;
 
   const rows = [
     [
@@ -138,6 +140,9 @@ async function showPhotos(cb: CallbackQueryContext): Promise<void> {
       BotKeyboard.callback(`🖼 Banner ${i + 1}`, `cfg:ph:b${i}`),
     ]);
   });
+  if (styles.length < CONFIG.maxBannerReferences) {
+    rows.push([BotKeyboard.callback("➕ Add banner slot", "cfg:ph:add")]);
+  }
   rows.push([BotKeyboard.callback("← Back", "cfg:main")]);
 
   await cb.editMessage({ text, replyMarkup: BotKeyboard.inline(rows) });
@@ -149,8 +154,19 @@ async function handlePhoto(
   userId: number,
   parts: string[],
 ): Promise<void> {
-  const target = parts[0]; // "doc" | "b0" | "b1"
-  const action = parts[1]; // "view" | "rep" | "del" | undefined
+  const target = parts[0]; // "doc" | "b0" | "b1" | ... | "add"
+  const action = parts[1]; // "view" | "rep" | "del" | "rm" | undefined
+
+  // Add a new banner slot
+  if (target === "add") {
+    const idx = addBannerSlot();
+    if (idx === null) {
+      await cb.answer({ text: `Max ${CONFIG.maxBannerReferences} banner slots reached` });
+      return;
+    }
+    await cb.answer({ text: `Banner ${idx + 1} added` });
+    return await showPhotos(cb);
+  }
 
   if (!action) {
     // Show photo details
@@ -187,8 +203,8 @@ async function handlePhoto(
             BotKeyboard.callback("🔄 Replace", `cfg:ph:b${idx}:rep`),
           ],
           [
-            BotKeyboard.callback("🗑 Delete", `cfg:ph:b${idx}:del`),
-            BotKeyboard.callback("↩️ Reset", `cfg:rst:bn${idx}`),
+            BotKeyboard.callback("🗑 Clear photo", `cfg:ph:b${idx}:del`),
+            BotKeyboard.callback("🗑 Remove slot", `cfg:ph:b${idx}:rm`),
           ],
           [BotKeyboard.callback("← Back", "cfg:photos")],
         ]),
@@ -240,6 +256,28 @@ async function handlePhoto(
     }
     await cb.editMessage({
       text: "🗑 Photo deleted.",
+      replyMarkup: BotKeyboard.inline([
+        [BotKeyboard.callback("← Back", "cfg:photos")],
+      ]),
+    });
+    return;
+  }
+
+  if (action === "rm") {
+    await cb.answer({});
+    const idx = parseInt(target.slice(1), 10);
+    const removed = removeBannerSlot(idx);
+    if (!removed) {
+      await cb.editMessage({
+        text: "❌ Could not remove slot.",
+        replyMarkup: BotKeyboard.inline([
+          [BotKeyboard.callback("← Back", "cfg:photos")],
+        ]),
+      });
+      return;
+    }
+    await cb.editMessage({
+      text: `🗑 Banner ${idx + 1} slot removed.`,
       replyMarkup: BotKeyboard.inline([
         [BotKeyboard.callback("← Back", "cfg:photos")],
       ]),
@@ -697,8 +735,17 @@ async function handleReset(
 
   if (target === "doc") {
     resetField("doctorPortrait");
-  } else if (target?.startsWith("bn")) {
+  } else if (target === "banners") {
     resetField("bannerStyles");
+  } else if (target?.startsWith("bn")) {
+    // Reset individual banner to its default (if exists) or clear it
+    const idx = parseInt(target.slice(2), 10);
+    const defaults = CONFIG.referenceAssets.bannerStyles;
+    if (idx < defaults.length) {
+      setBannerStyle(idx, defaults[idx].path, defaults[idx].promptHint);
+    } else {
+      deleteBannerStyle(idx);
+    }
   }
 
   await cb.answer({ text: "Reset to default" });

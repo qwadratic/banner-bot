@@ -151,6 +151,37 @@ export function setBannerAnnotation(index: number, promptHint: string): void {
   persist();
 }
 
+export function addBannerSlot(): number | null {
+  if (!overrides.bannerStyles) {
+    overrides.bannerStyles = CONFIG.referenceAssets.bannerStyles.map((s) => ({ ...s }));
+  }
+  if (overrides.bannerStyles.length >= CONFIG.maxBannerReferences) return null;
+  overrides.bannerStyles.push({
+    path: null,
+    role: "style",
+    promptHint: "Style reference. Do not reproduce any text, layout, or people from this image.",
+  });
+  persist();
+  return overrides.bannerStyles.length - 1;
+}
+
+export function removeBannerSlot(index: number): boolean {
+  if (!overrides.bannerStyles) {
+    overrides.bannerStyles = CONFIG.referenceAssets.bannerStyles.map((s) => ({ ...s }));
+  }
+  if (index < 0 || index >= overrides.bannerStyles.length) return false;
+  // Clean up uploaded file if exists
+  const slot = overrides.bannerStyles[index];
+  if (slot.path?.includes("_rt.")) {
+    try {
+      fs.unlinkSync(path.resolve(process.cwd(), slot.path));
+    } catch { /* ignore */ }
+  }
+  overrides.bannerStyles.splice(index, 1);
+  persist();
+  return true;
+}
+
 export function deleteBannerStyle(index: number): void {
   if (!overrides.bannerStyles) {
     overrides.bannerStyles = CONFIG.referenceAssets.bannerStyles.map((s) => ({ ...s }));

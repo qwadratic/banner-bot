@@ -60,6 +60,9 @@ export const CONFIG = {
 
   stagesWithDoctor: ["Authority", "Micro-value"] as const,
 
+  // Gemini supports up to 14 reference images; 1 is reserved for doctor portrait.
+  maxBannerReferences: 13,
+
   // ── Image prompt template ──────────────────────────────────────────────
   imagePromptTemplate: `
 Create a high-impact Telegram banner for a medical education brand.
