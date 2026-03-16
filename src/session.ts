@@ -58,11 +58,11 @@ export type Session = {
 
 export type DevConfigAwait = {
   type: "photo";
-  target: string; // "doc" | "b0" | "b1"
+  target: string; // "doc" | "b0" | "b1" | ... | "b{N}"
   userId: number;
 } | {
   type: "text";
-  target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b0" | "mod_add_VISUAL_HOOK" etc.
+  target: string; // "gate_prompt" | "sonnet_prompt" | "image_template" | "ann_doc" | "ann_b{N}" | "mod_add_VISUAL_HOOK" etc.
   userId: number;
 } | {
   type: "admin_add";
