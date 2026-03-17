@@ -1,6 +1,6 @@
 import type { TelegramClient } from "@mtcute/node";
 import { CONFIG } from "./config.js";
-import { globalState } from "./session.js";
+import { globalState, endSession } from "./session.js";
 import { devAlert } from "./devAlert.js";
 
 let intervalId: ReturnType<typeof setInterval> | null = null;
@@ -23,36 +23,33 @@ export function stopSessionTtl(): void {
 }
 
 async function checkSessionTtl(tg: TelegramClient): Promise<void> {
-  const session = globalState.activeSession;
-  if (!session) return;
+  for (const [userId, session] of globalState.activeSessions) {
+    const elapsed = Date.now() - session.lastActivityAt;
 
-  const elapsed = Date.now() - session.lastActivityAt;
+    if (elapsed >= CONFIG.timeouts.sessionExpireAt) {
+      const snapshot = {
+        userId: session.userId,
+        sessionId: session.sessionId,
+        phase: session.phase,
+        elapsed,
+      };
 
-  if (elapsed >= CONFIG.timeouts.sessionExpireAt) {
-    // Session expired
-    const snapshot = {
-      userId: session.userId,
-      sessionId: session.sessionId,
-      phase: session.phase,
-      elapsed,
-    };
+      endSession(userId);
 
-    globalState.activeSession = null;
+      await devAlert("session auto-expired", "Session expired due to inactivity", snapshot);
 
-    await devAlert("session auto-expired", "Session expired due to inactivity", snapshot);
-
-    try {
-      await tg.sendText(session.userId, CONFIG.ui.sessionExpired);
-    } catch {
-      // ignore send failures
-    }
-  } else if (elapsed >= CONFIG.timeouts.sessionWarnAt && !session.warningSent) {
-    // Send warning
-    session.warningSent = true;
-    try {
-      await tg.sendText(session.userId, CONFIG.ui.sessionWarn);
-    } catch {
-      // ignore
+      try {
+        await tg.sendText(session.userId, CONFIG.ui.sessionExpired);
+      } catch {
+        // ignore send failures
+      }
+    } else if (elapsed >= CONFIG.timeouts.sessionWarnAt && !session.warningSent) {
+      session.warningSent = true;
+      try {
+        await tg.sendText(session.userId, CONFIG.ui.sessionWarn);
+      } catch {
+        // ignore
+      }
     }
   }
 }

@@ -70,18 +70,33 @@ export type DevConfigAwait = {
 } | null;
 
 export type GlobalState = {
-  activeSession: Session | null;
+  activeSessions: Map<number, Session>;
   devUserMode: boolean;
   devConfigAwait: DevConfigAwait;
   testMode: boolean;
 };
 
 export const globalState: GlobalState = {
-  activeSession: null,
+  activeSessions: new Map(),
   devUserMode: false,
   devConfigAwait: null,
   testMode: false,
 };
+
+/** Get session for a specific user, or null */
+export function getSession(userId: number): Session | null {
+  return globalState.activeSessions.get(userId) ?? null;
+}
+
+/** Set (or replace) session for a user */
+export function setSession(userId: number, session: Session): void {
+  globalState.activeSessions.set(userId, session);
+}
+
+/** End session for a user */
+export function endSession(userId: number): void {
+  globalState.activeSessions.delete(userId);
+}
 
 export function createSession(userId: number): Session {
   return {

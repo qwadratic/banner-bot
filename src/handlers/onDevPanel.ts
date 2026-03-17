@@ -2,11 +2,20 @@ import { execSync } from "node:child_process";
 import { TelegramClient, BotKeyboard, InputMedia, md } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG, resolvedModels } from "../config.js";
-import { globalState } from "../session.js";
+import { globalState, endSession } from "../session.js";
 import { devAlert } from "../devAlert.js";
-import { getAdminUserIds, addAdminUserId, removeAdminUserId } from "../runtimeConfig.js";
+import {
+  getAdminUserIds, addAdminUserId, removeAdminUserId,
+  generateInviteToken, getInviteTokens, revokeInviteToken,
+} from "../runtimeConfig.js";
 
 export const startTime = Date.now();
+
+/** Bot username — set once at startup */
+let botUsername = "";
+export function setBotUsername(username: string): void {
+  botUsername = username;
+}
 
 function formatUptime(ms: number): string {
   const totalSeconds = Math.floor(ms / 1000);
@@ -48,11 +57,12 @@ export function startupMessageText(): string {
   const uptime = formatUptime(Date.now() - startTime);
   const cetTime = formatCET(new Date(startTime));
   const git = getGitInfo();
-  return (
-    `Up since ${cetTime} CET (${uptime})\n` +
-    `${git.branch} ${git.hash}\n` +
-    git.message
-  );
+  let text = `Up since ${cetTime} CET (${uptime})`;
+  if (git.branch !== "unknown") {
+    text += `\n${git.branch} ${git.hash}`;
+    if (git.message) text += `\n${git.message}`;
+  }
+  return text;
 }
 
 export function devPanelKeyboard() {
@@ -66,6 +76,10 @@ export function devPanelKeyboard() {
     [
       BotKeyboard.callback("📊 Sessions", "dev:sessions"),
       BotKeyboard.callback("⚙️ Config", "cfg:main"),
+    ],
+    [
+      BotKeyboard.callback("🔗 Invite links", "dev:invites"),
+      BotKeyboard.callback("👥 Admins", "dev:admins"),
     ],
     [
       BotKeyboard.callback("⬇️ Pull & Reboot", "dev:update"),
@@ -84,7 +98,7 @@ function backKeyboard() {
 
 function sessionsText(): string {
   const uptime = formatUptime(Date.now() - startTime);
-  const session = globalState.activeSession;
+  const sessions = globalState.activeSessions;
 
   let text = `🧠 Memory\n\n`;
   text += `Uptime: ${uptime}\n`;
@@ -92,21 +106,19 @@ function sessionsText(): string {
   text += `Dev user mode: ${globalState.devUserMode ? "ON" : "OFF"}\n`;
   text += `Config await: ${globalState.devConfigAwait ? globalState.devConfigAwait.type : "none"}\n\n`;
 
-  if (session) {
-    const runtime = formatUptime(Date.now() - session.lastActivityAt);
-    const sessionAge = formatUptime(Date.now() - (session.lastActivityAt - 0));
-    text += `Active session:\n`;
-    text += `  User: ${session.userId}\n`;
-    text += `  Session ID: ${session.sessionId.slice(0, 8)}…\n`;
-    text += `  Phase: ${session.phase}\n`;
-    text += `  Last activity: ${runtime} ago\n`;
-    text += `  Stage: ${session.detectedStage ?? "—"}\n`;
-    text += `  Confidence: ${session.stageConfidence ?? "—"}\n`;
-    text += `  Hints: ${session.selectedHints.stage ?? "—"} / ${session.selectedHints.style ?? "—"}\n`;
-    text += `  Generations: ${session.generationCount}\n`;
-    text += `  Warning sent: ${session.warningSent ? "yes" : "no"}\n`;
+  if (sessions.size === 0) {
+    text += `Active sessions: none`;
   } else {
-    text += `Active session: none`;
+    text += `Active sessions: ${sessions.size}\n`;
+    for (const [, session] of sessions) {
+      const runtime = formatUptime(Date.now() - session.lastActivityAt);
+      text += `\n  User: ${session.userId}\n`;
+      text += `  Session: ${session.sessionId.slice(0, 8)}…\n`;
+      text += `  Phase: ${session.phase}\n`;
+      text += `  Last activity: ${runtime} ago\n`;
+      text += `  Stage: ${session.detectedStage ?? "—"}\n`;
+      text += `  Generations: ${session.generationCount}\n`;
+    }
   }
 
   return text;
@@ -499,16 +511,15 @@ async function execShell(cmd: string): Promise<{ stdout: string; stderr: string;
 
 export function shutdownMessageText(): string {
   const uptime = formatUptime(Date.now() - startTime);
-  const session = globalState.activeSession;
+  const sessions = globalState.activeSessions;
   let text = `🔴 Bot shutting down\nUptime was: ${uptime}\n`;
-  if (session) {
-    const sessionStart = new Date(session.lastActivityAt);
-    text += `\nActive session:\n`;
-    text += `  User: ${session.userId}\n`;
-    text += `  Started: ${formatCET(sessionStart)} CET\n`;
-    text += `  Phase: ${session.phase}`;
+  if (sessions.size === 0) {
+    text += `\nNo active sessions`;
   } else {
-    text += `\nNo active session`;
+    text += `\n${sessions.size} active session(s):`;
+    for (const [, session] of sessions) {
+      text += `\n  User: ${session.userId}, Phase: ${session.phase}`;
+    }
   }
   return text;
 }
@@ -689,13 +700,6 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       }
 
       case "usermode": {
-        if (globalState.activeSession) {
-          await cb.answer({
-            text: "A session is already active",
-          });
-          return;
-        }
-
         await cb.answer({});
         globalState.devUserMode = true;
         const modeNote = globalState.testMode ? " (🧪 UI test)" : "";
@@ -733,6 +737,66 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
+      case "invites": {
+        await cb.answer({});
+        const tokens = getInviteTokens();
+        const unused = tokens.filter((t) => !t.usedBy);
+        const used = tokens.filter((t) => t.usedBy);
+
+        let text = `🔗 Invite Links\n\n`;
+        text += `${unused.length} active, ${used.length} used\n`;
+
+        const rows: ReturnType<typeof BotKeyboard.callback>[][] = [];
+        for (const t of unused) {
+          const label = t.label ?? t.token.slice(0, 8);
+          rows.push([
+            BotKeyboard.callback(`🔗 ${label}`, `dev:inv_view:${t.token}`),
+            BotKeyboard.callback(`🗑`, `dev:inv_rm:${t.token}`),
+          ]);
+        }
+        rows.push([BotKeyboard.callback("➕ Generate invite", "dev:inv_gen")]);
+        if (used.length > 0) {
+          rows.push([BotKeyboard.callback(`📋 Used (${used.length})`, "dev:inv_used")]);
+        }
+        rows.push([BotKeyboard.callback("← Back", "dev:back")]);
+        await cb.editMessage({ text, replyMarkup: BotKeyboard.inline(rows) });
+        break;
+      }
+
+      case "inv_gen": {
+        await cb.answer({});
+        const token = generateInviteToken(devTgId);
+        const username = botUsername;
+        const link = `https://t.me/${username}?start=invite_${token}`;
+
+        await cb.editMessage({
+          text: `🔗 New invite link:\n\n${link}\n\nSend this to the person you want to grant access. One-time use.`,
+          replyMarkup: BotKeyboard.inline([
+            [BotKeyboard.callback("← Back to invites", "dev:invites")],
+          ]),
+        });
+        break;
+      }
+
+      case "inv_used": {
+        await cb.answer({});
+        const tokens = getInviteTokens().filter((t) => t.usedBy);
+        let text = `📋 Used Invites\n\n`;
+        for (const t of tokens) {
+          const date = new Date(t.usedAt!).toLocaleDateString("en-GB");
+          text += `• ${t.token.slice(0, 8)}… → user ${t.usedBy} (${date})\n`;
+        }
+        if (tokens.length === 0) text += "(none)";
+
+        await cb.editMessage({
+          text,
+          replyMarkup: BotKeyboard.inline([
+            [BotKeyboard.callback("← Back to invites", "dev:invites")],
+          ]),
+        });
+        break;
+      }
+
       case "back": {
         await cb.answer({});
         await cb.editMessage({
@@ -743,6 +807,50 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       }
 
       default: {
+        // Handle dev:inv_view:<token> pattern
+        if (action.startsWith("inv_view:")) {
+          const token = action.slice(9);
+          const username = botUsername;
+          const link = `https://t.me/${username}?start=invite_${token}`;
+          await cb.answer({});
+          await cb.editMessage({
+            text: `🔗 Invite link:\n\n${link}`,
+            replyMarkup: BotKeyboard.inline([
+              [BotKeyboard.callback("🗑 Revoke", `dev:inv_rm:${token}`)],
+              [BotKeyboard.callback("← Back to invites", "dev:invites")],
+            ]),
+          });
+          break;
+        }
+
+        // Handle dev:inv_rm:<token> pattern
+        if (action.startsWith("inv_rm:")) {
+          const token = action.slice(7);
+          const revoked = revokeInviteToken(token);
+          await cb.answer({ text: revoked ? "Revoked" : "Not found" });
+          // Re-render invite list
+          const tokens = getInviteTokens();
+          const unused = tokens.filter((t) => !t.usedBy);
+          const used = tokens.filter((t) => t.usedBy);
+          let text = `🔗 Invite Links\n\n`;
+          text += `${unused.length} active, ${used.length} used\n`;
+          const rows: ReturnType<typeof BotKeyboard.callback>[][] = [];
+          for (const t of unused) {
+            const label = t.label ?? t.token.slice(0, 8);
+            rows.push([
+              BotKeyboard.callback(`🔗 ${label}`, `dev:inv_view:${t.token}`),
+              BotKeyboard.callback(`🗑`, `dev:inv_rm:${t.token}`),
+            ]);
+          }
+          rows.push([BotKeyboard.callback("➕ Generate invite", "dev:inv_gen")]);
+          if (used.length > 0) {
+            rows.push([BotKeyboard.callback(`📋 Used (${used.length})`, "dev:inv_used")]);
+          }
+          rows.push([BotKeyboard.callback("← Back", "dev:back")]);
+          await cb.editMessage({ text, replyMarkup: BotKeyboard.inline(rows) });
+          break;
+        }
+
         // Handle dev:adm_rm:<id> pattern
         if (action.startsWith("adm_rm:")) {
           const idToRemove = parseInt(action.slice(7), 10);

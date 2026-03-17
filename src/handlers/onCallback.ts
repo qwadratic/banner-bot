@@ -2,7 +2,7 @@ import { BotKeyboard, InputMedia, type TelegramClient } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
 import { getModuleOptions } from "../runtimeConfig.js";
-import { globalState, touchSession, createSession } from "../session.js";
+import { getSession, setSession, endSession, touchSession, createSession } from "../session.js";
 import type { Session } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import { analyzeMessage, reanalyzeForStage } from "../flow/analyze.js";
@@ -22,9 +22,9 @@ export async function handleCallback(tg: TelegramClient, cb: CallbackQueryContex
   }
 
   const userId = cb.user.id;
-  const session = globalState.activeSession;
+  const session = getSession(userId);
 
-  if (!session || session.userId !== userId) {
+  if (!session) {
     await cb.answer({ text: "Немає активної сесії." });
     return;
   }
@@ -441,7 +441,7 @@ async function handleFeedback(tg: TelegramClient, cb: CallbackQueryContext, sess
 
 async function handleSession(tg: TelegramClient, cb: CallbackQueryContext, session: Session, value: string): Promise<void> {
   if (value === "end") {
-    globalState.activeSession = null;
+    endSession(session.userId);
     await cb.answer({});
     await deactivateMessage(cb, "❌ Сесію завершено");
     await tg.sendText(session.userId, CONFIG.ui.sessionEnded);
@@ -461,7 +461,7 @@ async function handleInterrupt(tg: TelegramClient, cb: CallbackQueryContext, ses
     // Reset session
     const newSession = createSession(userId);
     newSession.phase = "WAITING_FOR_MESSAGE";
-    globalState.activeSession = newSession;
+    setSession(userId, newSession);
 
     await cb.answer({});
     await cb.editMessage({ text: "Сесію скасовано." });

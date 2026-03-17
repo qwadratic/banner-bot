@@ -3,7 +3,7 @@ import { TelegramClient } from "@mtcute/node";
 import { Dispatcher } from "@mtcute/dispatcher";
 import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerBotHandlers } from "./router.js";
-import { devPanelKeyboard, startupMessageText, shutdownMessageText } from "./handlers/onDevPanel.js";
+import { devPanelKeyboard, startupMessageText, shutdownMessageText, setBotUsername } from "./handlers/onDevPanel.js";
 import { initFeedbackDb } from "./db/feedback.js";
 import { initRuntimeConfig, seedAdminUserIds } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
@@ -62,6 +62,7 @@ startSessionTtl(tg);
 // Start the bot
 async function main() {
   const self = await tg.start({ botToken: BOT_TOKEN });
+  setBotUsername(self.username ?? "");
   console.log(`Bot started as @${self.username ?? self.displayName}`);
   console.log(`Dev TG ID: ${DEV_TG_ID}`);
   console.log(`Admin user IDs: ${ADMIN_USER_IDS.join(", ") || "(none)"}`);

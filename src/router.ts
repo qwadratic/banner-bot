@@ -1,7 +1,7 @@
 import { BotKeyboard, type TelegramClient } from "@mtcute/node";
 import { Dispatcher, filters } from "@mtcute/dispatcher";
 import type { MessageContext } from "@mtcute/dispatcher";
-import { globalState } from "./session.js";
+import { globalState, endSession } from "./session.js";
 import { handleStart, handleCancel } from "./handlers/onCommand.js";
 import { handleMessage } from "./handlers/onMessage.js";
 import { handleCallback } from "./handlers/onCallback.js";
@@ -25,10 +25,21 @@ export function registerBotHandlers(
     return isAuthorized(uid);
   };
 
-  // /start command from authorized users
+  // /start command — handle invite deep-links for anyone, regular start for authorized users
   dp.onNewMessage(filters.command("start"), async (msg) => {
+    const uid = msg.sender?.id;
+    if (!uid) return;
+
+    // Check for invite deep-link — allow from ANY user
+    const text = msg.text?.trim() ?? "";
+    if (text.match(/^\/start\s+invite_/)) {
+      await handleStart(tg, msg, devTgId);
+      return;
+    }
+
+    // Regular /start — only authorized users
     if (!isAuthorizedUser(msg)) return;
-    await handleStart(tg, msg);
+    await handleStart(tg, msg, devTgId);
   });
 
   // /cancel command from authorized users
@@ -46,9 +57,7 @@ export function registerBotHandlers(
     globalState.devConfigAwait = null;
 
     // End active session if it belongs to the dev user
-    if (globalState.activeSession?.userId === uid) {
-      globalState.activeSession = null;
-    }
+    endSession(uid);
 
     await tg.sendText(uid, startupMessageText(), {
       replyMarkup: devPanelKeyboard(),

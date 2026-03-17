@@ -1,7 +1,7 @@
 import { BotKeyboard, type TelegramClient } from "@mtcute/node";
 import type { MessageContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
-import { globalState, createSession, touchSession } from "../session.js";
+import { createSession, getSession, setSession, touchSession } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import { classifyMessage, GateTimeoutError } from "../flow/gate.js";
 import { stageStepText, stageStepKeyboard } from "../ui/hintSelector.js";
@@ -13,19 +13,13 @@ export async function handleMessage(tg: TelegramClient, msg: MessageContext): Pr
   const text = msg.text?.trim();
   if (!text) return;
 
-  const session = globalState.activeSession;
+  let session = getSession(userId);
 
-  // No active session — create one and process message
-  if (!session || session.userId !== userId) {
-    // Check if another user's session is active
-    if (session && session.userId !== userId) {
-      await tg.sendText(userId, CONFIG.ui.busyError);
-      return;
-    }
-
+  // No active session for this user — create one
+  if (!session) {
     const newSession = createSession(userId);
     newSession.phase = "WAITING_FOR_MESSAGE";
-    globalState.activeSession = newSession;
+    setSession(userId, newSession);
     await processIncomingText(tg, userId, text);
     return;
   }
@@ -72,7 +66,7 @@ export async function handleMessage(tg: TelegramClient, msg: MessageContext): Pr
 }
 
 async function processIncomingText(tg: TelegramClient, userId: number, text: string): Promise<void> {
-  const session = globalState.activeSession!;
+  const session = getSession(userId)!;
 
   try {
     const result = await classifyMessage(text);

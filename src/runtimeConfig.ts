@@ -1,8 +1,18 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { randomBytes } from "node:crypto";
 import { CONFIG } from "./config.js";
 
 const CONFIG_PATH = path.resolve(process.cwd(), "runtime-config.json");
+
+interface InviteToken {
+  token: string;
+  createdAt: number;
+  createdBy: number;
+  label?: string;
+  usedBy?: number;
+  usedAt?: number;
+}
 
 interface RuntimeOverrides {
   haikusSystemPrompt?: string;
@@ -13,6 +23,7 @@ interface RuntimeOverrides {
   stageModuleDefaults?: Record<string, Record<string, string>>;
   moduleOptions?: Record<string, string[]>;
   adminUserIds?: number[];
+  inviteTokens?: InviteToken[];
 }
 
 /** Initial admin IDs from env — set once at startup */
@@ -283,3 +294,46 @@ export function removeAdminUserId(id: number): boolean {
   persist();
   return true;
 }
+
+// ── Invite tokens ─────────────────────────────────────────────────────────
+
+export function generateInviteToken(createdBy: number, label?: string): string {
+  const token = randomBytes(12).toString("base64url");
+  if (!overrides.inviteTokens) overrides.inviteTokens = [];
+  overrides.inviteTokens.push({
+    token,
+    createdAt: Date.now(),
+    createdBy,
+    label,
+  });
+  persist();
+  return token;
+}
+
+export function getInviteTokens(): InviteToken[] {
+  return overrides.inviteTokens ?? [];
+}
+
+/** Validate and consume an invite token. Returns true if valid & consumed. */
+export function consumeInviteToken(token: string, userId: number): boolean {
+  if (!overrides.inviteTokens) return false;
+  const entry = overrides.inviteTokens.find((t) => t.token === token && !t.usedBy);
+  if (!entry) return false;
+  entry.usedBy = userId;
+  entry.usedAt = Date.now();
+  // Also add them as admin
+  addAdminUserId(userId);
+  persist();
+  return true;
+}
+
+export function revokeInviteToken(token: string): boolean {
+  if (!overrides.inviteTokens) return false;
+  const idx = overrides.inviteTokens.findIndex((t) => t.token === token);
+  if (idx === -1) return false;
+  overrides.inviteTokens.splice(idx, 1);
+  persist();
+  return true;
+}
+
+export type { InviteToken };
