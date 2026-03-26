@@ -59,6 +59,43 @@ gh run view <run-id> --log
 - **Time**: ~20 seconds end-to-end
 - **Secrets**: managed in GitHub repo settings (BOT_TOKEN, API_ID, API_HASH, DEV_TG_ID, OPENROUTER_API_KEY)
 
+### Accessing the Production Instance (exe.dev)
+
+The bot runs on `banner-bot.exe.xyz` via [exe.dev](https://exe.dev). Access is SSH-based.
+
+```bash
+# First-time setup (interactive — accept host key, login)
+! ssh exe.dev
+
+# List VMs
+ssh exe.dev ls
+
+# SSH into the banner-bot VM (run commands via heredoc)
+ssh exe.dev ssh banner-bot <<'CMD'
+systemctl status banner-bot
+CMD
+
+# Inspect deployed code
+ssh exe.dev ssh banner-bot <<'CMD'
+grep -A5 "haikusSystemPrompt" /opt/banner-bot/dist/config.js | head -10
+CMD
+
+# View live logs
+ssh exe.dev ssh banner-bot <<'CMD'
+journalctl -u banner-bot -f --no-pager -n 50
+CMD
+
+# Restart the service (if needed outside CI)
+ssh exe.dev ssh banner-bot <<'CMD'
+sudo systemctl restart banner-bot
+CMD
+```
+
+Key paths on the VM:
+- `/opt/banner-bot/` — deployed app (dist/, node_modules/, package.json)
+- `/opt/banner-bot/.env` — secrets (chmod 600, root-only)
+- `/etc/systemd/system/banner-bot.service` — systemd unit
+
 ### Adding Test Cases
 
 To add a new eval case, create a `.txt` file in `eval/`:
