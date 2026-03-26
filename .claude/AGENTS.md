@@ -1,0 +1,74 @@
+# Agents & Workflows
+
+## `/prime` — Interpreter-Executor Subagent
+
+Spawns a subagent with the `default-prime.md` BRIEF→EXECUTE framework. Useful for any task that benefits from structured reasoning before execution.
+
+```
+/prime <task description>
+```
+
+The subagent runs with opus model, has full codebase access, and returns output to the caller. Uses two-stage protocol: first presents a structured BRIEF (role, objective, approach, output format), then EXECUTEs directly.
+
+Agent definition: `.claude/agents/default-prime.md`
+
+---
+
+## Simple Fix Loop
+
+A reusable workflow for diagnosing and fixing prompt/config issues in the banner-bot. Demonstrated on the gate prompt fix (2026-03-26).
+
+### The Loop
+
+```
+1. REPRODUCE    → Run eval harness to capture baseline behavior
+2. DIAGNOSE     → Analyze why the prompt/config fails (multi-run stats)
+3. FIX          → One-shot change to the source (src/config.ts)
+4. VERIFY LOCAL → Re-run eval to confirm fix works
+5. DEPLOY       → git push origin main (triggers CI → systemd restart, ~20s)
+6. CONFIRM PROD → Re-run eval to validate prod behavior matches
+```
+
+### Commands
+
+```bash
+# Run gate eval (default 10 runs per message, haiku model)
+source ~/.zshrc && node eval/run-gate-eval.mjs [runs] [model]
+
+# Check deploy status
+gh run list --limit 1
+gh run watch <run-id> --exit-status
+
+# View deploy logs
+gh run view <run-id> --log
+```
+
+### Eval Harness Convention
+
+- Test messages live in `eval/*.txt`
+- Files with `not-funnel` in the name are expected to be REJECTED
+- All other `.txt` files (except `gate-prompt.txt`) are expected to PASS
+- The harness reads the prompt directly from `src/config.ts` (single source of truth)
+- Exit code 0 = all correct, 1 = failures detected
+
+### Deployment
+
+- **Trigger**: push to `main` branch
+- **CI**: GitHub Actions on self-hosted runner (`.github/workflows/ci.yml`)
+- **Flow**: checkout → npm ci → tsc build → copy to `/opt/banner-bot/` → systemd restart
+- **Time**: ~20 seconds end-to-end
+- **Secrets**: managed in GitHub repo settings (BOT_TOKEN, API_ID, API_HASH, DEV_TG_ID, OPENROUTER_API_KEY)
+
+### Adding Test Cases
+
+To add a new eval case, create a `.txt` file in `eval/`:
+
+```bash
+# Message that SHOULD pass the gate
+echo "Your funnel message text" > eval/eval-my-test.txt
+
+# Message that SHOULD be rejected
+echo "Some non-funnel text" > eval/eval-not-funnel-my-test.txt
+```
+
+Then run `node eval/run-gate-eval.mjs` to verify.
