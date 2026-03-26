@@ -27,7 +27,19 @@ A reusable workflow for diagnosing and fixing prompt/config issues in the banner
 4. VERIFY LOCAL → Re-run eval to confirm fix works
 5. DEPLOY       → git push origin main (triggers CI → systemd restart, ~20s)
 6. CONFIRM PROD → Re-run eval to validate prod behavior matches
+7. CLEANUP      → Stop all background tasks/shells spawned during the session
 ```
+
+### Cleanup (mandatory)
+
+After every session, stop all background tasks you spawned. SSH sessions to exe.dev stay open indefinitely if not killed — always clean up.
+
+```bash
+# List running background tasks and stop each one
+# Use TaskStop for each task ID from background SSH/bash commands
+```
+
+This is not optional. Leave no orphaned shells or SSH connections behind.
 
 ### Commands
 
