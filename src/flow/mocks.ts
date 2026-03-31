@@ -7,7 +7,7 @@
 import * as zlib from "node:zlib";
 import type { SonnetOutput, ModuleSet } from "../session.js";
 import type { GateResult } from "./openrouter.js";
-import { getStageModuleDefaults } from "../runtimeConfig.js";
+import { getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
 
 // ── Delays (simulate network latency) ────────────────────────────────────
 
@@ -129,7 +129,11 @@ export async function mockAnalyzeMessage(
   }
 
   const defaults = getStageModuleDefaults();
-  const modules = (defaults[stage] ?? defaults["Attention"]) as ModuleSet;
+  const base = defaults[stage] ?? defaults["Attention"];
+  // Pick a MAIN_ELEMENT based on input hash for variety (simulates Sonnet creativity)
+  const mainOpts = getModuleOptions()["MAIN_ELEMENT"] ?? ["foot_diagram"];
+  const mainElement = mainOpts[hashString(inputText + stage) % mainOpts.length];
+  const modules = { ...base, MAIN_ELEMENT: mainElement } as ModuleSet;
 
   const confidence = hints.stage && modelAgreesWithHint ? "high" : "medium";
 
@@ -153,7 +157,10 @@ export async function mockReanalyzeForStage(
   await delay(ANALYZE_DELAY);
 
   const defaults = getStageModuleDefaults();
-  const modules = (defaults[stage] ?? defaults["Attention"]) as ModuleSet;
+  const base = defaults[stage] ?? defaults["Attention"];
+  const mainOpts = getModuleOptions()["MAIN_ELEMENT"] ?? ["foot_diagram"];
+  const mainElement = mainOpts[hashString(inputText + stage) % mainOpts.length];
+  const modules = { ...base, MAIN_ELEMENT: mainElement } as ModuleSet;
 
   return {
     detectedStage: stage,
