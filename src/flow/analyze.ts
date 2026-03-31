@@ -1,7 +1,7 @@
 import { MODULE_KEYS, globalState } from "../session.js";
 import type { SonnetOutput } from "../session.js";
 import { CONFIG, resolvedModels } from "../config.js";
-import { getSonnetPrompt, getSonnetUserTemplate, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
+import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
 import { mockAnalyzeMessage, mockReanalyzeForStage } from "./mocks.js";
 import { fetchOpenRouter, withRetries, VALID_CONFIDENCES } from "./openrouter.js";
 
@@ -57,12 +57,34 @@ function buildUserMessage(inputText: string, hints: { stage?: string; style?: st
     hintsBlock = "No hints provided. Determine stage from the message alone.";
   }
 
-  return getSonnetUserTemplate()
-    .replace("{schema}", CONFIG.sonnetOutputSchema)
-    .replace("{message}", inputText)
-    .replace("{hints}", hintsBlock)
-    .replace("{stageModuleTable}", buildStageModuleTable())
-    .replace("{moduleOptions}", buildModuleOptionsList());
+  return `Analyze the following funnel message and return a JSON object matching this schema exactly:
+
+${CONFIG.sonnetOutputSchema}
+
+Funnel message:
+"""
+${inputText}
+"""
+
+${hintsBlock}
+
+Stage-to-module reference table (defaults for VISUAL_HOOK, VISUAL_DRAMA, COMPOSITION, SCROLL_EFFECT — deviate when justified):
+
+${buildStageModuleTable()}
+
+Available module values per category:
+
+${buildModuleOptionsList()}
+
+IMPORTANT — MAIN_ELEMENT:
+The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.
+
+Field instructions:
+- "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
+- "headline": Ukrainian. ALL CAPS. Max 6 words. Extracted or rewritten from the funnel message. Must be the strongest possible hook for this stage.
+- "secondary": Ukrainian. Max 10 words. Supports the headline. Calm, direct.
+- "modelAgreesWithHint": true if you agree with the stage hint, false if you disagree, null if no hint was given.
+- "disagreementReason": one sentence in English explaining why you chose a different stage. null if no disagreement.`;
 }
 
 function extractTextContent(data: { choices?: Array<{ message?: { content?: string | Array<{ type: string; text?: string }> } }> }): string {

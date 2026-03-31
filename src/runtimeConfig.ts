@@ -7,7 +7,6 @@ const CONFIG_PATH = path.resolve(process.cwd(), "runtime-config.json");
 interface RuntimeOverrides {
   haikusSystemPrompt?: string;
   sonnetSystemPrompt?: string;
-  sonnetUserTemplate?: string;
   imagePromptTemplate?: string;
   doctorPortrait?: { path: string; promptHint: string };
   bannerStyles?: Array<{ path: string | null; role: string; promptHint: string }>;
@@ -44,10 +43,6 @@ export function getHaikuPrompt(): string {
 
 export function getSonnetPrompt(): string {
   return overrides.sonnetSystemPrompt ?? CONFIG.sonnetSystemPrompt;
-}
-
-export function getSonnetUserTemplate(): string {
-  return overrides.sonnetUserTemplate ?? CONFIG.sonnetUserTemplate;
 }
 
 export function getImageTemplate(): string {
@@ -91,11 +86,6 @@ export function setHaikuPrompt(value: string): void {
 
 export function setSonnetPrompt(value: string): void {
   overrides.sonnetSystemPrompt = value;
-  persist();
-}
-
-export function setSonnetUserTemplate(value: string): void {
-  overrides.sonnetUserTemplate = value;
   persist();
 }
 

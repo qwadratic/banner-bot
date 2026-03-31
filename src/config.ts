@@ -185,39 +185,6 @@ Brand context:
 }
   `.trim(),
 
-  // ── Sonnet user message template ──────────────────────────────────────
-  // Placeholders: {schema}, {message}, {hints}, {stageModuleTable}, {moduleOptions}
-  sonnetUserTemplate: `
-Analyze the following funnel message and return a JSON object matching this schema exactly:
-
-{schema}
-
-Funnel message:
-"""
-{message}
-"""
-
-{hints}
-
-Stage-to-module reference table (defaults for VISUAL_HOOK, VISUAL_DRAMA, COMPOSITION, SCROLL_EFFECT — deviate when justified):
-
-{stageModuleTable}
-
-Available module values per category:
-
-{moduleOptions}
-
-IMPORTANT — MAIN_ELEMENT:
-The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.
-
-Field instructions:
-- "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
-- "headline": Ukrainian. ALL CAPS. Max 6 words. Extracted or rewritten from the funnel message. Must be the strongest possible hook for this stage.
-- "secondary": Ukrainian. Max 10 words. Supports the headline. Calm, direct.
-- "modelAgreesWithHint": true if you agree with the stage hint, false if you disagree, null if no hint was given.
-- "disagreementReason": one sentence in English explaining why you chose a different stage. null if no disagreement.
-  `.trim(),
-
   // ── Hint options ───────────────────────────────────────────────────────
   hints: {
     stage: [
