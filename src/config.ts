@@ -139,6 +139,13 @@ Your role in this system:
 2. Select the optimal visual module combination for a banner that stops the scroll and drives action
 3. Generate a complete, production-ready image prompt for the Nano Banana 2 image generation model
 
+MAIN_ELEMENT selection rules (CRITICAL):
+- The reference table provides defaults for VISUAL_HOOK, VISUAL_DRAMA, COMPOSITION, and SCROLL_EFFECT only.
+- You MUST choose MAIN_ELEMENT yourself based on the specific message content, not the stage.
+- NEVER default to the same element for a given stage. For example, FOMO does NOT always need a countdown_timer — it could use bold_statistic, before_after, icon_grid, or any element that fits the message.
+- Read the message carefully: what is its core visual subject? What object or concept would be most striking and relevant as the banner's central visual?
+- Prioritize variety and surprise. Pick the element that best serves THIS specific message, not the most "typical" one for the stage.
+
 Always reason carefully about why a module combination serves the specific message's intent. When the user provides stage or style hints, weigh them seriously — agree when they fit, propose alternatives with clear reasoning when they don't.
 
 Respond ONLY with a valid JSON object matching the schema provided in the user message. No markdown, no preamble, no explanation outside the JSON.
@@ -199,16 +206,16 @@ Brand context:
     ],
   },
 
-  // ── Stage → Module defaults ────────────────────────────────────────────
+  // ── Stage → Module defaults (MAIN_ELEMENT excluded — chosen by Sonnet per message) ─
   stageModuleDefaults: {
-    Attention:      { VISUAL_HOOK: "contrast",           VISUAL_DRAMA: "diagnostic",    COMPOSITION: "left_text_right_visual", MAIN_ELEMENT: "foot_diagram",       SCROLL_EFFECT: "graphic_arrows" },
-    Identification: { VISUAL_HOOK: "quote_visual",       VISUAL_DRAMA: "discovery",     COMPOSITION: "centered_headline",      MAIN_ELEMENT: "text_quote",         SCROLL_EFFECT: "strong_contrast" },
-    Problem:        { VISUAL_HOOK: "professional_chaos",  VISUAL_DRAMA: "diagnostic",    COMPOSITION: "split_screen",           MAIN_ELEMENT: "symptom_labels",     SCROLL_EFFECT: "visual_paradox" },
-    Insight:        { VISUAL_HOOK: "medical_markup",      VISUAL_DRAMA: "explanation",   COMPOSITION: "left_text_right_visual", MAIN_ELEMENT: "foot_diagram",       SCROLL_EFFECT: "dramatic_zoom" },
-    Authority:      { VISUAL_HOOK: "split_reality",       VISUAL_DRAMA: "explanation",   COMPOSITION: "split_screen",           MAIN_ELEMENT: "orthotic_insert",    SCROLL_EFFECT: "strong_contrast" },
-    "Micro-value":  { VISUAL_HOOK: "magnified_detail",    VISUAL_DRAMA: "discovery",     COMPOSITION: "oversized_object",       MAIN_ELEMENT: "macro_foot_texture", SCROLL_EFFECT: "dramatic_zoom" },
-    Possibility:    { VISUAL_HOOK: "symbolic_object",     VISUAL_DRAMA: "transformation", COMPOSITION: "centered_headline",      MAIN_ELEMENT: "orthotic_insert",    SCROLL_EFFECT: "minimalism" },
-    FOMO:           { VISUAL_HOOK: "contrast",           VISUAL_DRAMA: "urgency",       COMPOSITION: "centered_headline",      MAIN_ELEMENT: "countdown_timer",    SCROLL_EFFECT: "strong_contrast" },
+    Attention:      { VISUAL_HOOK: "contrast",           VISUAL_DRAMA: "diagnostic",     COMPOSITION: "left_text_right_visual", SCROLL_EFFECT: "graphic_arrows" },
+    Identification: { VISUAL_HOOK: "quote_visual",       VISUAL_DRAMA: "discovery",      COMPOSITION: "centered_headline",      SCROLL_EFFECT: "strong_contrast" },
+    Problem:        { VISUAL_HOOK: "professional_chaos",  VISUAL_DRAMA: "diagnostic",     COMPOSITION: "split_screen",           SCROLL_EFFECT: "visual_paradox" },
+    Insight:        { VISUAL_HOOK: "medical_markup",      VISUAL_DRAMA: "explanation",    COMPOSITION: "left_text_right_visual", SCROLL_EFFECT: "dramatic_zoom" },
+    Authority:      { VISUAL_HOOK: "split_reality",       VISUAL_DRAMA: "explanation",    COMPOSITION: "split_screen",           SCROLL_EFFECT: "strong_contrast" },
+    "Micro-value":  { VISUAL_HOOK: "magnified_detail",    VISUAL_DRAMA: "discovery",      COMPOSITION: "oversized_object",       SCROLL_EFFECT: "dramatic_zoom" },
+    Possibility:    { VISUAL_HOOK: "symbolic_object",     VISUAL_DRAMA: "transformation", COMPOSITION: "centered_headline",      SCROLL_EFFECT: "minimalism" },
+    FOMO:           { VISUAL_HOOK: "contrast",           VISUAL_DRAMA: "urgency",        COMPOSITION: "centered_headline",      SCROLL_EFFECT: "strong_contrast" },
   } as Record<string, Record<string, string>>,
 
   // ── Module options per category ────────────────────────────────────────
@@ -216,7 +223,7 @@ Brand context:
     VISUAL_HOOK:   ["contrast", "magnified_detail", "medical_markup", "split_reality", "symbolic_object", "quote_visual", "professional_chaos"],
     VISUAL_DRAMA:  ["diagnostic", "discovery", "explanation", "transformation", "urgency"],
     COMPOSITION:   ["left_text_right_visual", "centered_headline", "split_screen", "oversized_object", "minimal_focus"],
-    MAIN_ELEMENT:  ["foot_diagram", "orthotic_insert", "macro_foot_texture", "symptom_labels", "countdown_timer", "text_quote"],
+    MAIN_ELEMENT:  ["foot_diagram", "orthotic_insert", "macro_foot_texture", "symptom_labels", "countdown_timer", "text_quote", "before_after", "bold_statistic", "icon_grid", "patient_silhouette", "process_steps", "certificate_badge"],
     SCROLL_EFFECT: ["oversized_object", "visual_paradox", "strong_contrast", "graphic_arrows", "dramatic_zoom", "minimalism"],
   } as Record<string, string[]>,
 

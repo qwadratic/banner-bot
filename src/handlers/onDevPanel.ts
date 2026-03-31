@@ -71,6 +71,9 @@ export function devPanelKeyboard() {
       BotKeyboard.callback("⬇️ Pull & Reboot", "dev:update"),
       BotKeyboard.callback("🔄 Reboot", "dev:restart"),
     ],
+    [
+      BotKeyboard.callback("🌿 Switch Branch", "dev:branches"),
+    ],
   ];
 
   return BotKeyboard.inline(rows);
@@ -733,6 +736,34 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
         break;
       }
 
+      case "branches": {
+        await cb.answer({});
+        try {
+          await execShell("git fetch --prune");
+          const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+          const branchResult = await execShell("git branch -a --format='%(refname:short)'");
+          const allBranches = branchResult.stdout
+            .split("\n")
+            .map((b) => b.trim().replace(/^origin\//, ""))
+            .filter((b) => b && b !== "HEAD" && !b.includes("->"))
+            .filter((b, i, arr) => arr.indexOf(b) === i); // deduplicate
+
+          const rows = allBranches.slice(0, 20).map((branch) => {
+            const label = branch === currentBranch ? `✅ ${branch}` : branch;
+            return [BotKeyboard.callback(label, `dev:br_sw:${branch}`)];
+          });
+          rows.push([BotKeyboard.callback("← Back", "dev:back")]);
+
+          await cb.editMessage({
+            text: `🌿 Switch Branch\n\nCurrent: ${currentBranch}\n\nSelect a branch to checkout, build, and restart:`,
+            replyMarkup: BotKeyboard.inline(rows),
+          });
+        } catch (err) {
+          await tg.sendText(devTgId, `❌ Failed to list branches: ${String(err).slice(0, 500)}`);
+        }
+        break;
+      }
+
       case "back": {
         await cb.answer({});
         await cb.editMessage({
@@ -743,6 +774,67 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
       }
 
       default: {
+        // Handle dev:br_sw:<branch> pattern — switch branch, build, restart
+        if (action.startsWith("br_sw:")) {
+          const targetBranch = action.slice(6);
+          await cb.answer({});
+
+          const currentBranch = execSync("git rev-parse --abbrev-ref HEAD", { encoding: "utf8" }).trim();
+          if (targetBranch === currentBranch) {
+            await cb.editMessage({
+              text: `Already on branch "${targetBranch}".`,
+              replyMarkup: BotKeyboard.inline([[BotKeyboard.callback("← Back", "dev:branches")]]),
+            });
+            break;
+          }
+
+          await cb.editMessage({ text: `🌿 Switching to "${targetBranch}"...` });
+
+          // Step 1: checkout
+          const coResult = await execShell(`git checkout ${targetBranch}`);
+          if (coResult.code !== 0) {
+            // Try creating a local tracking branch
+            const coTrack = await execShell(`git checkout -b ${targetBranch} origin/${targetBranch}`);
+            if (coTrack.code !== 0) {
+              await tg.sendText(devTgId, `❌ git checkout failed:\n${(coResult.stderr || coTrack.stderr).slice(0, 2000)}`);
+              break;
+            }
+          }
+
+          // Step 2: pull latest
+          const pullResult = await execShell(`git pull origin ${targetBranch}`);
+          if (pullResult.code !== 0 && !pullResult.stderr.includes("Already up to date")) {
+            await tg.sendText(devTgId, `⚠️ git pull warning:\n${pullResult.stderr.slice(0, 1000)}`);
+          }
+
+          // Step 3: npm install
+          await tg.sendText(devTgId, `📦 Installing dependencies...`);
+          const npmResult = await execShell("npm install");
+          if (npmResult.code !== 0) {
+            await tg.sendText(devTgId, `❌ npm install failed:\n${(npmResult.stderr || npmResult.stdout).slice(0, 2000)}`);
+            // Rollback to previous branch
+            await execShell(`git checkout ${currentBranch}`);
+            await tg.sendText(devTgId, `↩️ Rolled back to ${currentBranch}.`);
+            break;
+          }
+
+          // Step 4: build
+          await tg.sendText(devTgId, `🔨 Building...`);
+          const buildResult = await execShell("npm run build");
+          if (buildResult.code !== 0) {
+            await tg.sendText(devTgId, `❌ Build failed:\n${(buildResult.stderr || buildResult.stdout).slice(0, 2000)}`);
+            await execShell(`git checkout ${currentBranch}`);
+            await execShell("npm install && npm run build");
+            await tg.sendText(devTgId, `↩️ Rolled back to ${currentBranch}.`);
+            break;
+          }
+
+          // Step 5: restart
+          await tg.sendText(devTgId, `✅ Switched to "${targetBranch}". Restarting...`);
+          setTimeout(() => process.exit(0), 500);
+          break;
+        }
+
         // Handle dev:adm_rm:<id> pattern
         if (action.startsWith("adm_rm:")) {
           const idToRemove = parseInt(action.slice(7), 10);

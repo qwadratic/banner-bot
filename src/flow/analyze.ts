@@ -26,10 +26,13 @@ function isValidSonnetOutput(obj: unknown): obj is SonnetOutput {
 
 function buildStageModuleTable(): string {
   const defaults = getStageModuleDefaults();
-  const header = `| Stage | ${MODULE_KEYS.join(" | ")} |`;
-  const sep = `|${MODULE_KEYS.map(() => "---").concat("---").join("|")}|`;
+  // Only show module keys that are present in defaults (MAIN_ELEMENT is excluded — chosen by Sonnet)
+  const firstRow = Object.values(defaults)[0] ?? {};
+  const tableKeys = MODULE_KEYS.filter((k) => k in firstRow);
+  const header = `| Stage | ${tableKeys.join(" | ")} |`;
+  const sep = `|${["---", ...tableKeys.map(() => "---")].join("|")}|`;
   const rows = Object.entries(defaults).map(([stage, mods]) => {
-    const vals = MODULE_KEYS.map((k) => mods[k] ?? "");
+    const vals = tableKeys.map((k) => mods[k] ?? "");
     return `| ${stage} | ${vals.join(" | ")} |`;
   });
   return [header, sep, ...rows].join("\n");
@@ -65,13 +68,16 @@ ${inputText}
 
 ${hintsBlock}
 
-Stage-to-module reference table (use as starting point, deviate when justified):
+Stage-to-module reference table (defaults for VISUAL_HOOK, VISUAL_DRAMA, COMPOSITION, SCROLL_EFFECT — deviate when justified):
 
 ${buildStageModuleTable()}
 
 Available module values per category:
 
 ${buildModuleOptionsList()}
+
+IMPORTANT — MAIN_ELEMENT:
+The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.
 
 Field instructions:
 - "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
