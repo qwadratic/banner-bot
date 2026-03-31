@@ -4,6 +4,7 @@ import { CONFIG, resolvedModels } from "../config.js";
 import { getSonnetPrompt, getStageModuleDefaults, getModuleOptions } from "../runtimeConfig.js";
 import { mockAnalyzeMessage, mockReanalyzeForStage } from "./mocks.js";
 import { fetchOpenRouter, withRetries, VALID_CONFIDENCES } from "./openrouter.js";
+import { getRecentElements, recordElement } from "../db/elementHistory.js";
 
 const VALID_STAGES = new Set([
   "Attention", "Identification", "Problem", "Insight",
@@ -45,6 +46,15 @@ function buildModuleOptionsList(): string {
     .join("\n\n");
 }
 
+function buildExclusionNote(stage: string): string {
+  const recent = getRecentElements(stage);
+  if (recent.length === 0) return "";
+  const unique = [...new Set(recent)];
+  return `\n\nMAIN_ELEMENT DIVERSITY CONSTRAINT (MANDATORY):
+The following MAIN_ELEMENT values were used in recent ${stage} banners and MUST NOT be used again: ${unique.join(", ")}.
+Pick a DIFFERENT element from the available options. This is a hard constraint, not a suggestion.`;
+}
+
 function buildUserMessage(inputText: string, hints: { stage?: string; style?: string }): string {
   let hintsBlock: string;
   if (hints.stage && hints.style) {
@@ -77,7 +87,7 @@ Available module values per category:
 ${buildModuleOptionsList()}
 
 IMPORTANT — MAIN_ELEMENT:
-The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.
+The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.${hints.stage ? buildExclusionNote(hints.stage) : ""}
 
 Field instructions:
 - "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
@@ -134,6 +144,26 @@ async function callSonnet(
   });
 }
 
+/**
+ * If Sonnet picked a MAIN_ELEMENT that was recently used for this stage,
+ * swap it for a random unused alternative.
+ */
+function enforceElementDiversity(result: SonnetOutput): void {
+  const stage = result.detectedStage;
+  const chosen = result.modules.MAIN_ELEMENT;
+  const recent = new Set(getRecentElements(stage));
+
+  if (recent.has(chosen)) {
+    const allOptions = getModuleOptions()["MAIN_ELEMENT"] ?? [];
+    const available = allOptions.filter((o) => !recent.has(o));
+    if (available.length > 0) {
+      result.modules.MAIN_ELEMENT = available[Math.floor(Math.random() * available.length)];
+    }
+  }
+
+  recordElement(stage, result.modules.MAIN_ELEMENT);
+}
+
 export async function analyzeMessage(
   inputText: string,
   hints: { stage?: string; style?: string },
@@ -141,7 +171,9 @@ export async function analyzeMessage(
   if (globalState.testMode) return mockAnalyzeMessage(inputText, hints);
 
   const userMessage = buildUserMessage(inputText, hints);
-  return callSonnet(getSonnetPrompt(), userMessage, "analyze");
+  const result = await callSonnet(getSonnetPrompt(), userMessage, "analyze");
+  enforceElementDiversity(result);
+  return result;
 }
 
 export async function reanalyzeForStage(
@@ -152,5 +184,7 @@ export async function reanalyzeForStage(
   if (globalState.testMode) return mockReanalyzeForStage(inputText, stage, hints);
 
   const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
-  return callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
+  const result = await callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
+  enforceElementDiversity(result);
+  return result;
 }
