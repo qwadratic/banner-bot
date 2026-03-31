@@ -6,10 +6,10 @@ import { CONFIG } from "../config.js";
 import { globalState } from "../session.js";
 import { devAlert } from "../devAlert.js";
 import {
-  getHaikuPrompt, getSonnetPrompt, getImageTemplate,
+  getHaikuPrompt, getSonnetPrompt, getSonnetUserTemplate, getImageTemplate,
   getDoctorPortrait, getBannerStyles,
   getStageModuleDefaults, getModuleOptions,
-  setHaikuPrompt, setSonnetPrompt, setImageTemplate,
+  setHaikuPrompt, setSonnetPrompt, setSonnetUserTemplate, setImageTemplate,
   setDoctorPortrait, setDoctorAnnotation, deleteDoctorPortrait,
   setBannerStyle, setBannerAnnotation, deleteBannerStyle,
   addBannerSlot, removeBannerSlot,
@@ -365,13 +365,17 @@ async function handlePrompt(
     await cb.answer({});
     const gateOv = hasOverride("haikusSystemPrompt") ? " ✏️" : "";
     const sonOv = hasOverride("sonnetSystemPrompt") ? " ✏️" : "";
+    const sonUserOv = hasOverride("sonnetUserTemplate") ? " ✏️" : "";
 
     await cb.editMessage({
-      text: `🤖 System Prompts\n\nGate (Haiku)${gateOv}\nAnalyze (Sonnet)${sonOv}`,
+      text: `🤖 System Prompts\n\nGate (Haiku)${gateOv}\nAnalyze (Sonnet system)${sonOv}\nAnalyze (Sonnet user msg)${sonUserOv}`,
       replyMarkup: BotKeyboard.inline([
         [
           BotKeyboard.callback(`🚪 Gate${gateOv}`, "cfg:pr:gate"),
           BotKeyboard.callback(`🔬 Sonnet${sonOv}`, "cfg:pr:son"),
+        ],
+        [
+          BotKeyboard.callback(`📨 Sonnet User${sonUserOv}`, "cfg:pr:sonusr"),
         ],
         [BotKeyboard.callback("← Back", "cfg:main")],
       ]),
@@ -381,9 +385,12 @@ async function handlePrompt(
 
   if (action === "edit") {
     await cb.answer({});
-    const key = target === "gate" ? "gate_prompt" : "sonnet_prompt";
+    const key = target === "gate" ? "gate_prompt" : target === "sonusr" ? "sonnet_user_template" : "sonnet_prompt";
     globalState.devConfigAwait = { type: "text", target: key, userId };
-    await tg.sendText(userId, "🤖 Send the new system prompt text.");
+    const hint = target === "sonusr"
+      ? "📨 Send the new Sonnet user message template.\n\nPlaceholders: {schema}, {message}, {hints}, {stageModuleTable}, {moduleOptions}"
+      : "🤖 Send the new system prompt text.";
+    await tg.sendText(userId, hint);
     return;
   }
 
@@ -391,6 +398,8 @@ async function handlePrompt(
     await cb.answer({});
     if (target === "gate") {
       resetField("haikusSystemPrompt");
+    } else if (target === "sonusr") {
+      resetField("sonnetUserTemplate");
     } else {
       resetField("sonnetSystemPrompt");
     }
@@ -405,7 +414,7 @@ async function handlePrompt(
 
   if (action === "view") {
     await cb.answer({});
-    const text = target === "gate" ? getHaikuPrompt() : getSonnetPrompt();
+    const text = target === "gate" ? getHaikuPrompt() : target === "sonusr" ? getSonnetUserTemplate() : getSonnetPrompt();
     const chunks = splitMessage(text, 4000);
     for (const chunk of chunks) {
       await tg.sendText(userId, chunk);
@@ -415,11 +424,13 @@ async function handlePrompt(
 
   // Show prompt details
   await cb.answer({});
-  const label = target === "gate" ? "🚪 Gate (Haiku)" : "🔬 Analyze (Sonnet)";
-  const prompt = target === "gate" ? getHaikuPrompt() : getSonnetPrompt();
+  const label = target === "gate" ? "🚪 Gate (Haiku)" : target === "sonusr" ? "📨 Sonnet User Msg" : "🔬 Analyze (Sonnet)";
+  const prompt = target === "gate" ? getHaikuPrompt() : target === "sonusr" ? getSonnetUserTemplate() : getSonnetPrompt();
   const isOverride = target === "gate"
     ? hasOverride("haikusSystemPrompt")
-    : hasOverride("sonnetSystemPrompt");
+    : target === "sonusr"
+      ? hasOverride("sonnetUserTemplate")
+      : hasOverride("sonnetSystemPrompt");
 
   const preview = prompt.slice(0, 500) + (prompt.length > 500 ? "..." : "");
 
@@ -829,6 +840,9 @@ export async function handleConfigInput(
     } else if (target === "sonnet_prompt") {
       setSonnetPrompt(text);
       await tg.sendText(uid, `✅ Sonnet prompt updated (${text.length} chars).`);
+    } else if (target === "sonnet_user_template") {
+      setSonnetUserTemplate(text);
+      await tg.sendText(uid, `✅ Sonnet user template updated (${text.length} chars).`);
     } else if (target === "image_template") {
       setImageTemplate(text);
       await tg.sendText(uid, `✅ Image template updated (${text.length} chars).`);
