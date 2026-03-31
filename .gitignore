@@ -2,3 +2,5 @@ node_modules/
 dist/
 .env
 *.session
+*.db
+runtime-config.json

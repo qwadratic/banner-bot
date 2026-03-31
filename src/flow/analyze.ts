@@ -39,20 +39,22 @@ function buildStageModuleTable(): string {
   return [header, sep, ...rows].join("\n");
 }
 
-function buildModuleOptionsList(): string {
+function buildModuleOptionsList(excludeElements: Set<string>): string {
   const opts = getModuleOptions();
   return Object.entries(opts)
-    .map(([cat, vals]) => `${cat}: ${vals.join(", ")}`)
+    .map(([cat, vals]) => {
+      const filtered = cat === "MAIN_ELEMENT" && excludeElements.size > 0
+        ? vals.filter((v) => !excludeElements.has(v))
+        : vals;
+      return `${cat}: ${filtered.join(", ")}`;
+    })
     .join("\n\n");
 }
 
-function buildExclusionNote(stage: string): string {
+function getExcludedElements(stage: string | undefined): Set<string> {
+  if (!stage) return new Set();
   const recent = getRecentElements(stage);
-  if (recent.length === 0) return "";
-  const unique = [...new Set(recent)];
-  return `\n\nMAIN_ELEMENT DIVERSITY CONSTRAINT (MANDATORY):
-The following MAIN_ELEMENT values were used in recent ${stage} banners and MUST NOT be used again: ${unique.join(", ")}.
-Pick a DIFFERENT element from the available options. This is a hard constraint, not a suggestion.`;
+  return new Set(recent);
 }
 
 function buildUserMessage(inputText: string, hints: { stage?: string; style?: string }): string {
@@ -66,6 +68,8 @@ function buildUserMessage(inputText: string, hints: { stage?: string; style?: st
   } else {
     hintsBlock = "No hints provided. Determine stage from the message alone.";
   }
+
+  const excluded = getExcludedElements(hints.stage);
 
   return `Analyze the following funnel message and return a JSON object matching this schema exactly:
 
@@ -84,10 +88,10 @@ ${buildStageModuleTable()}
 
 Available module values per category:
 
-${buildModuleOptionsList()}
+${buildModuleOptionsList(excluded)}
 
 IMPORTANT — MAIN_ELEMENT:
-The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion.${hints.stage ? buildExclusionNote(hints.stage) : ""}
+The reference table above does NOT include MAIN_ELEMENT. You must choose it yourself from the available MAIN_ELEMENT options listed above based on the specific message content. Do NOT fall back to a "typical" element for the stage. Think about what central visual best represents THIS message's core idea, product, or emotion. Your scene description MUST feature the chosen MAIN_ELEMENT as the central visual subject.
 
 Field instructions:
 - "scene": English description of the visual scene for the image model. Be specific about composition, subject positioning, and visual drama. 2–4 sentences max.
@@ -144,24 +148,9 @@ async function callSonnet(
   });
 }
 
-/**
- * If Sonnet picked a MAIN_ELEMENT that was recently used for this stage,
- * swap it for a random unused alternative.
- */
-function enforceElementDiversity(result: SonnetOutput): void {
-  const stage = result.detectedStage;
-  const chosen = result.modules.MAIN_ELEMENT;
-  const recent = new Set(getRecentElements(stage));
-
-  if (recent.has(chosen)) {
-    const allOptions = getModuleOptions()["MAIN_ELEMENT"] ?? [];
-    const available = allOptions.filter((o) => !recent.has(o));
-    if (available.length > 0) {
-      result.modules.MAIN_ELEMENT = available[Math.floor(Math.random() * available.length)];
-    }
-  }
-
-  recordElement(stage, result.modules.MAIN_ELEMENT);
+/** Record the chosen MAIN_ELEMENT for future diversity tracking. */
+function trackElement(result: SonnetOutput): void {
+  recordElement(result.detectedStage, result.modules.MAIN_ELEMENT);
 }
 
 export async function analyzeMessage(
@@ -172,7 +161,7 @@ export async function analyzeMessage(
 
   const userMessage = buildUserMessage(inputText, hints);
   const result = await callSonnet(getSonnetPrompt(), userMessage, "analyze");
-  enforceElementDiversity(result);
+  trackElement(result);
   return result;
 }
 
@@ -185,6 +174,6 @@ export async function reanalyzeForStage(
 
   const userMessage = buildUserMessage(inputText, { stage, style: hints.style });
   const result = await callSonnet(getSonnetPrompt(), userMessage, "reanalyze");
-  enforceElementDiversity(result);
+  trackElement(result);
   return result;
 }
