@@ -5,6 +5,7 @@ import { devAlert, initDevAlert } from "./devAlert.js";
 import { registerBotHandlers } from "./router.js";
 import { devPanelKeyboard, startupMessageText, shutdownMessageText } from "./handlers/onDevPanel.js";
 import { initFeedbackDb } from "./db/feedback.js";
+import { initElementHistoryDb } from "./db/elementHistory.js";
 import { initRuntimeConfig, seedAdminUserIds } from "./runtimeConfig.js";
 import { startSessionTtl } from "./sessionTtl.js";
 import { startupSmokeTest } from "./startupSmokeTest.js";
@@ -36,8 +37,9 @@ const dp = Dispatcher.for(tg);
 // Initialize dev alert system
 initDevAlert(tg, DEV_TG_ID);
 
-// Initialize feedback database
+// Initialize databases
 initFeedbackDb();
+initElementHistoryDb();
 
 // Initialize runtime config (load overrides from disk)
 initRuntimeConfig();
