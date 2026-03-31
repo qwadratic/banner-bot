@@ -1,7 +1,7 @@
 import { BotKeyboard, InputMedia, type TelegramClient } from "@mtcute/node";
 import type { CallbackQueryContext } from "@mtcute/dispatcher";
 import { CONFIG } from "../config.js";
-import { getModuleOptions } from "../runtimeConfig.js";
+
 import { globalState, touchSession, createSession } from "../session.js";
 import type { Session } from "../session.js";
 import { devAlert } from "../devAlert.js";
@@ -239,7 +239,7 @@ async function handleGenerate(tg: TelegramClient, cb: CallbackQueryContext, sess
   if (value === "confirm") {
     await doGenerate(tg, cb, session, false, "✅ Генерацію запущено");
   } else if (value === "same") {
-    await doGenerate(tg, cb, session, false, "🔁 Повторна генерація");
+    await doGenerate(tg, cb, session, true, "🔁 Повторна генерація");
   } else if (value === "variation") {
     await doGenerate(tg, cb, session, true, "🎲 Варіація");
   } else {
@@ -247,7 +247,7 @@ async function handleGenerate(tg: TelegramClient, cb: CallbackQueryContext, sess
   }
 }
 
-async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, variation: boolean, sourceNote: string): Promise<void> {
+async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session: Session, reanalyze: boolean, sourceNote: string): Promise<void> {
   if (!session.modules || !session.sonnetOutput) {
     await cb.answer({ text: "Немає даних для генерації" });
     return;
@@ -259,16 +259,12 @@ async function doGenerate(tg: TelegramClient, cb: CallbackQueryContext, session:
   await tg.sendText(session.userId, CONFIG.ui.generating);
 
   try {
-    if (variation) {
-      // Swap one random module for variation
-      const categories = Object.keys(session.modules) as Array<keyof typeof session.modules>;
-      const cat = categories[Math.floor(Math.random() * categories.length)];
-      const options = getModuleOptions()[cat] ?? [];
-      const current = (session.userOverrides[cat] ?? session.modules[cat]) as string;
-      const alternatives = options.filter((o: string) => o !== current);
-      if (alternatives.length > 0) {
-        session.userOverrides[cat] = alternatives[Math.floor(Math.random() * alternatives.length)];
-      }
+    if (reanalyze) {
+      // Re-run full analysis to get fresh modules + scene with diversity enforcement
+      const result = await analyzeMessage(session.inputText, session.selectedHints);
+      session.modules = result.modules;
+      session.sonnetOutput = result;
+      session.userOverrides = {};
     }
 
     const prompt = assemblePrompt(session.modules, session.userOverrides, session.sonnetOutput);
