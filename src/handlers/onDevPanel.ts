@@ -676,7 +676,19 @@ export async function handleDevCallback(tg: TelegramClient, cb: CallbackQueryCon
           return;
         }
 
-        await tg.sendText(devTgId, "🔄 Restarting...");
+        await tg.sendText(devTgId, "🔨 Building...");
+        const buildResult = await execShell("npm run build");
+        if (buildResult.code !== 0) {
+          const errorText =
+            buildResult.stderr || buildResult.stdout || "Unknown build error";
+          await tg.sendText(
+            devTgId,
+            `❌ Build failed:\n\n${errorText.slice(0, 3000)}`,
+          );
+          return;
+        }
+
+        await tg.sendText(devTgId, "✅ Updated. Restarting...");
         setTimeout(() => process.exit(0), 500);
         break;
       }

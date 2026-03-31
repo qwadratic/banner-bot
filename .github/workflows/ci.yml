@@ -27,18 +27,42 @@ jobs:
           API_HASH: ${{ secrets.API_HASH }}
           DEV_TG_ID: ${{ secrets.DEV_TG_ID }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          ADMIN_USER_IDS: ${{ secrets.ADMIN_USER_IDS }}
         run: |
-          sudo mkdir -p /opt/banner-bot
-          sudo cp -r dist package.json package-lock.json node_modules /opt/banner-bot/
-          sudo cp banner-bot.service /etc/systemd/system/banner-bot.service
-          sudo tee /opt/banner-bot/.env > /dev/null <<EOF
+          DEPLOY_DIR="/opt/banner-bot"
+          REPO_URL="https://github.com/${{ github.repository }}.git"
+
+          # First-time setup: init git repo so branch switching works from inside the bot
+          if [ ! -d "$DEPLOY_DIR/.git" ]; then
+            sudo mkdir -p "$DEPLOY_DIR"
+            sudo git -C "$DEPLOY_DIR" init
+            sudo git -C "$DEPLOY_DIR" remote add origin "$REPO_URL"
+          fi
+
+          cd "$DEPLOY_DIR"
+
+          # Fetch and reset to the deployed commit
+          sudo git fetch origin main
+          sudo git checkout -f main 2>/dev/null || sudo git checkout -b main origin/main
+          sudo git reset --hard "${{ github.sha }}"
+
+          # Install, build
+          sudo npm ci
+          sudo npm run build
+
+          # Write .env (only if secrets are available)
+          sudo tee "$DEPLOY_DIR/.env" > /dev/null <<EOF
           BOT_TOKEN=${BOT_TOKEN}
           API_ID=${API_ID}
           API_HASH=${API_HASH}
           DEV_TG_ID=${DEV_TG_ID}
           OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+          ADMIN_USER_IDS=${ADMIN_USER_IDS}
           EOF
-          sudo chmod 600 /opt/banner-bot/.env
+          sudo chmod 600 "$DEPLOY_DIR/.env"
+
+          # Install systemd service
+          sudo cp banner-bot.service /etc/systemd/system/banner-bot.service
           sudo systemctl daemon-reload
           sudo systemctl enable banner-bot
           sudo systemctl restart banner-bot
